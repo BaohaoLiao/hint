@@ -5,6 +5,7 @@
 
 import os
 import chz
+import json
 from tqdm import tqdm
 
 import datasets
@@ -25,7 +26,7 @@ class CLIConfig:
     separator: str = "</think>"
 
     # Save
-    output_dir: str = "validated_dataset"
+    output_path: str = "validated_dataset.json"
 
 
 def validate_one_sample(
@@ -67,13 +68,18 @@ def validate_one_sample(
 
 
 def main(cli_config):
+    # Sanitize output path
+    output_dir = os.path.dirname(cli_config.output_path)
+    if output_dir != "" and not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
+
     # Load dataset
     if os.path.exists(cli_config.dataset_name) and os.path.isdir(
         cli_config.dataset_name
     ):
         samples = datasets.load_from_disk(cli_config.dataset_name)[cli_config.split]
     else:
-        samples = datasets.load_dataset(cli_config.dataset_name, split=cli_config.split)
+        samples = datasets.load_dataset(cli_config.dataset_name, split=cli_config.split).select(range(10))
 
     # Validate samples
     validated_samples = []
@@ -83,14 +89,19 @@ def main(cli_config):
             answer_key=cli_config.answer_key,
             solution_key=cli_config.solution_key,
         )
-        validated_sample = {**sample, "score_generations": scores}
-        validated_samples.append(validated_sample)
+        if any(scores):
+            validated_sample = {
+                "problem": sample["problem"],
+                "answer": sample["answer"]
+            }
+            validated_samples.append(validated_sample)
 
     # Save filtered dataset
-    valid_samples = [s for s in validated_samples if any(s["score_generations"])]
-    valid_dataset = datasets.Dataset.from_list(valid_samples)
-    valid_dataset.save_to_disk(cli_config.output_dir)
-    print(f"Saved {len(valid_dataset)} valid samples to {cli_config.output_dir}")
+    print(f"Saved {len(validated_samples)} valid samples to {cli_config.output_path}")
+    with open(cli_config.output_path, "w", encoding="utf8") as f:
+        for i in range(len(validated_samples)):
+            json.dump(validated_samples[i], f, ensure_ascii=False)
+            f.write("\n")    
 
 
 if __name__ == "__main__":

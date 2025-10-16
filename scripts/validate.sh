@@ -5,4 +5,4 @@ python -m data_process.answer_validate \
     split="train" \
     answer_key="answer" \
     solution_key="generations" \
-    output_dir="/mnt/nushare2/data/baliao/hint/data/openr1_validated"
+    output_path="/mnt/nushare2/data/baliao/hint/data/openr1/validated.json"
