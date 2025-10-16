@@ -11,7 +11,7 @@ GPUS=(0 1 2 3 4 5 6 7)
 echo "Starting parallel data generation..."
 for ((i=0; i<${#GPUS[@]}; i++)); do
     CUDA_VISIBLE_DEVICES=${i} python -m data_process.sampling \
-        dataset_name=${DATA} \
+        dataset_path=${DATA} \
         wolrd_size=${#GPUS[@]} \
         local_idx=${i} \
         model_name=${MODEL} \
