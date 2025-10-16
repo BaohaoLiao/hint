@@ -50,7 +50,7 @@ def extract_boxed(text: str) -> str:
         if match:
             return match.group(1)
         else:
-            raise ValueError("No boxed strings found")
+            return ""
         
 
 def validate_one_sample(
