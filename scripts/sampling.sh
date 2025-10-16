@@ -1,3 +1,5 @@
+#!/bin/bash
+
 cd /data/chatgpt-training-slc-a100/data/baliao/hint/00_data_process/hint
 
 DATA="/mnt/nushare2/data/baliao/hint/data/openr1/validated.json"
