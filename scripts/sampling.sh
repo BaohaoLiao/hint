@@ -16,7 +16,7 @@ for ((i=0; i<${#GPUS[@]}; i++)); do
         dataset_path=${DATA} \
         world_size=${#GPUS[@]} \
         local_idx=${i} \
-        model_name=${MODEL} \
+        model_name_or_path=${MODEL} \
         n=${N} \
         output_dir=${SAVE_DIR} &
 done
