@@ -112,7 +112,7 @@ def main(cli_config):
         )
 
     print(f"Collected {len(samples)} samples.")
-    save_file = os.pah.join(cli_config.output_dir, str(cli_config.local_idx) + ".json")
+    save_file = os.path.join(cli_config.output_dir, str(cli_config.local_idx) + ".json")
     with open(save_file, "w", encoding="utf8") as f:
         for i in range(len(samples)):
             json.dump(samples[i], f, ensure_ascii=False)
