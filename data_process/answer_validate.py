@@ -75,7 +75,7 @@ def main(cli_config):
     ):
         samples = datasets.load_from_disk(cli_config.dataset_name)[cli_config.split]
     else:
-        samples = datasets.load_dataset(cli_config.dataset_name, split=cli_config.split).select(range(10))
+        samples = datasets.load_dataset(cli_config.dataset_name, split=cli_config.split)
 
     # Validate samples
     validated_samples = []
