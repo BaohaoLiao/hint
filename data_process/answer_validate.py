@@ -30,7 +30,7 @@ class CLIConfig:
 
 def validate_one_sample(
     sample: dict, answer_key: str = "answer", solution_key: str = "generations"
-) -> bool:
+) -> list[bool]:
     """
     Validate whether a question has a verifiable answer with math_verify.
     """
@@ -63,9 +63,7 @@ def validate_one_sample(
 
         scores.append(ret_score)
 
-    if any(scores):
-        return True
-    return False
+    return scores
 
 
 def main(cli_config):
@@ -75,21 +73,23 @@ def main(cli_config):
     ):
         samples = datasets.load_from_disk(cli_config.dataset_name)[cli_config.split]
     else:
-        samples = datasets.load_dataset(cli_config.dataset_name, split=cli_config.split)
+        samples = datasets.load_dataset(
+            cli_config.dataset_name, split=cli_config.split
+        ).select(range(10))
 
     # Validate samples
     validated_samples = []
     for sample in tqdm(samples, desc="Validating samples", total=len(samples)):
-        is_valid = validate_one_sample(
+        scores = validate_one_sample(
             sample,
             answer_key=cli_config.answer_key,
             solution_key=cli_config.solution_key,
         )
-        validated_sample = {**sample, "is_valid": is_valid}
+        validated_sample = {**sample, "score_generations": scores}
         validated_samples.append(validated_sample)
 
     # Save filtered dataset
-    valid_samples = [s for s in validated_samples if s["is_valid"]]
+    valid_samples = [s for s in validated_samples if any(s["score_generations"])]
     valid_dataset = datasets.Dataset.from_list(valid_samples)
     valid_dataset.save_to_disk(cli_config.output_dir)
     print(f"Saved {len(valid_dataset)} valid samples to {cli_config.output_dir}")
