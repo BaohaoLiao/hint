@@ -77,8 +77,6 @@ def main(cli_config):
             )
         }
 
-    ds = ds.map(make_prompt, num_proc=4)
-
     # Load model
     llm = LLM(
         model=cli_config.model_name_or_path,
@@ -98,6 +96,7 @@ def main(cli_config):
         n=cli_config.n,
         stop_token_ids=[tokenizer.eos_token_id],
     )
+    ds = ds.map(make_prompt, num_proc=4)
     prompts = ds["prompt"]
     outputs = llm.generate(prompts, sampling_params=sampling_params, use_tqdm=True)
 
