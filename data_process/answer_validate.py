@@ -75,7 +75,7 @@ def main(cli_config):
     ):
         samples = datasets.load_from_disk(cli_config.dataset_name)[cli_config.split]
     else:
-        samples = datasets.load_dataset(cli_config.dataset_name, split=cli_config.split)[:10]
+        samples = datasets.load_dataset(cli_config.dataset_name, split=cli_config.split).select(range(10))
 
     # Validate samples
     for sample in tqdm(samples, desc="Validating samples", total=len(samples)):
