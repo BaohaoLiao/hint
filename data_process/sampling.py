@@ -54,7 +54,7 @@ def main(cli_config):
     end = (cli_config.local_idx + 1) * k + min(cli_config.local_idx + 1, m)
     ds = ds.select(np.arange(start, end))
     print(
-        f"Loaded {len(ds)} ([{start}, {end}]) samples from {cli_config.dataset_name}."
+        f"Loaded {len(ds)} ([{start}, {end}]) samples from {cli_config.dataset_path}."
     )
 
     def make_prompt(example):
