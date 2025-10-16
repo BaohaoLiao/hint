@@ -15,9 +15,7 @@ from vllm import LLM, SamplingParams
 @chz.chz
 class CLIConfig:
     # dataset
-    dataset_name: str = "open-r1/OpenR1-Math-220k"
-    split: str = "train"
-    question_key: str = "problem"
+    dataset_path: str = "test.json"
     world_size: int = 1
     local_idx: int = 0
 
@@ -32,41 +30,52 @@ class CLIConfig:
     seed: int = 42
 
     # Save
-    output_path: str = "gen_dataset"
+    output_dir: str = "gen_dataset"
 
 
 def main(cli_config):
+    # Sanitize output path
+    if not os.path.exists(cli_config.output_dir):
+        os.makedirs(cli_config.output_dir, exist_ok=True)
+
     # Set seed
     torch.manual_seed(cli_config.seed)
     np.random.seed(cli_config.seed)
 
     # Load dataset
-    if os.path.exists(cli_config.dataset_name) and os.path.isdir(
-        cli_config.dataset_name
-    ):
-        ds = datasets.load_from_disk(cli_config.dataset_name)
-    else:
-        ds = datasets.load_dataset(cli_config.dataset_name, split=cli_config.split)
-    
+    ds = datasets.load_dataset(
+        "json", data_files=cli_config.dataset_path, split="train"
+    )
+
     # Process dataset
     ## Split the dataset equally among GPUs
     k, m = divmod(len(ds), cli_config.world_size)
     start = cli_config.local_idx * k + min(cli_config.local_idx, m)
     end = (cli_config.local_idx + 1) * k + min(cli_config.local_idx + 1, m)
     ds = ds.select(np.arange(start, end))
-    print(f"Loaded {len(ds)} ([{start}, {end}]) samples from {cli_config.dataset_name}.")
+    print(
+        f"Loaded {len(ds)} ([{start}, {end}]) samples from {cli_config.dataset_name}."
+    )
 
     def make_prompt(example):
-        system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
-        question_suffix = " Let's think step by step and output the final answer within \\boxed{}."
-        
-        question = example[cli_config.question_key]
+        system_prompt = (
+            "Please reason step by step, and put your final answer within \\boxed{}."
+        )
+        question_suffix = (
+            " Let's think step by step and output the final answer within \\boxed{}."
+        )
+
+        question = example["problem"]
         question = question + question_suffix
         prompt_messages = [
-            {"role": "system", "content": system_prompt}, 
-            {"role": "user", "content": question}
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question},
         ]
-        return {"prompt": tokenizer.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)}
+        return {
+            "prompt": tokenizer.apply_chat_template(
+                prompt_messages, tokenize=False, add_generation_prompt=True
+            )
+        }
 
     ds = ds.map(make_prompt, num_proc=4)
 
@@ -87,7 +96,7 @@ def main(cli_config):
         top_p=1.0,
         max_tokens=cli_config.max_new_tokens,
         n=cli_config.n,
-        stop_token_ids=[tokenizer.eos_token_id]
+        stop_token_ids=[tokenizer.eos_token_id],
     )
     prompts = ds["prompt"]
     outputs = llm.generate(prompts, sampling_params=sampling_params, use_tqdm=True)
@@ -97,14 +106,14 @@ def main(cli_config):
     for i, output in enumerate(outputs):
         samples.append(
             {
-                "problem": ds[i][cli_config.question_key],
-                "answer": ds[i].get("answer"),
+                "problem": ds[i]["problem"],
+                "answer": ds["answer"],
                 "responses": [out.text for out in output.outputs],
             }
         )
 
     print(f"Collected {len(samples)} samples.")
-    save_file = os.pah.join(cli_config.output_dir + str(cli_config.local_idx) + ".json")
+    save_file = os.pah.join(cli_config.output_dir, str(cli_config.local_idx) + ".json")
     with open(save_file, "w", encoding="utf8") as f:
         for i in range(len(samples)):
             json.dump(samples[i], f, ensure_ascii=False)
