@@ -45,7 +45,7 @@ def main(cli_config):
     # Load dataset
     ds = datasets.load_dataset(
         "json", data_files=cli_config.dataset_path, split="train"
-    )
+    ).select(range(66))
 
     # Process dataset
     ## Split the dataset equally among GPUs
