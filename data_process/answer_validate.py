@@ -18,7 +18,7 @@ from math_verify.parser import LatexExtractionConfig
 class CLIConfig:
     # dataset
     dataset_name: str = "open-r1/OpenR1-Math-220k"
-    split: str = "default"
+    split: str = "train"
     answer_key: str = "answer"
     solution_key: str = "generations"
 
