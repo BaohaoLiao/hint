@@ -14,28 +14,28 @@ mkdir -p ${SAVE_DIR}
 
 # Iterative sampling
 for ITER in $(seq 1 ${MAX_ITERATIONS}); do
-    echo ""
-    echo "========================================"
-    echo "Starting iteration ${ITER}/${MAX_ITERATIONS}..."
-    echo "========================================"
+    # echo ""
+    # echo "========================================"
+    # echo "Starting iteration ${ITER}/${MAX_ITERATIONS}..."
+    # echo "========================================"
     
-    # Generate data in parallel across all GPUs
-    echo "Launching ${#GPUS[@]} parallel sampling jobs..."
-    for ((i=0; i<${#GPUS[@]}; i++)); do
-        CUDA_VISIBLE_DEVICES=${GPUS[$i]} python -m data_process.iterative_sampling \
-            dataset_path=${DATA} \
-            world_size=${#GPUS[@]} \
-            local_idx=${i} \
-            model_name_or_path=${MODEL} \
-            n=${N} \
-            iteration=${ITER} \
-            output_dir=${SAVE_DIR} \
-            merged_file="merged_all_iterations.json" &
-    done
+    # # Generate data in parallel across all GPUs
+    # echo "Launching ${#GPUS[@]} parallel sampling jobs..."
+    # for ((i=0; i<${#GPUS[@]}; i++)); do
+    #     CUDA_VISIBLE_DEVICES=${GPUS[$i]} python -m data_process.iterative_sampling \
+    #         dataset_path=${DATA} \
+    #         world_size=${#GPUS[@]} \
+    #         local_idx=${i} \
+    #         model_name_or_path=${MODEL} \
+    #         n=${N} \
+    #         iteration=${ITER} \
+    #         output_dir=${SAVE_DIR} \
+    #         merged_file="merged_all_iterations.json" &
+    # done
     
-    # Wait for all sampling jobs to complete
-    wait
-    echo "All sampling jobs completed for iteration ${ITER}"
+    # # Wait for all sampling jobs to complete
+    # wait
+    # echo "All sampling jobs completed for iteration ${ITER}"
     
     # Merge results from all GPUs
     echo ""

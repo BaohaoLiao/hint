@@ -212,6 +212,26 @@ def main(cli_config):
 
     print(f"[GPU {cli_config.local_idx}] Saved {len(samples)} samples to {save_file}")
 
+    # Properly cleanup the LLM to avoid NCCL warnings
+    try:
+        import gc
+        import torch.distributed as dist
+        
+        # Destroy the LLM instance
+        del llm
+        
+        # Cleanup distributed process group if it exists
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        
+        # Force garbage collection
+        gc.collect()
+        torch.cuda.empty_cache()
+        
+        print(f"[GPU {cli_config.local_idx}] Cleaned up resources")
+    except Exception as e:
+        print(f"[GPU {cli_config.local_idx}] Warning during cleanup: {e}")
+
 
 if __name__ == "__main__":
     cli_config = chz.entrypoint(CLIConfig)
