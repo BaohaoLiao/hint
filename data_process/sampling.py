@@ -106,7 +106,7 @@ def main(cli_config):
         samples.append(
             {
                 "problem": ds[i]["problem"],
-                "answer": ds["answer"],
+                "answer": ds[i]["answer"],
                 "responses": [out.text for out in output.outputs],
             }
         )
