@@ -5,6 +5,7 @@
 import os
 import chz
 import json
+import sys
 from collections import defaultdict
 
 
@@ -45,10 +46,13 @@ def load_current_iteration_results(output_dir, iteration, world_size):
         iter_file = os.path.join(output_dir, f"iter{iteration}_{gpu_idx}.json")
         
         if not os.path.exists(iter_file):
-            print(f"Warning: File not found: {iter_file}")
-            continue
+            print(f"ERROR: File not found: {iter_file}")
+            print(f"Stopping merge process. Not all GPUs completed successfully.")
+            sys.exit(2)  # Exit code 2 indicates missing file error
         
+        print(f"Loading {iter_file}...")
         with open(iter_file, 'r', encoding='utf8') as f:
+            count = 0
             for line in f:
                 if line.strip():
                     sample = json.loads(line)
@@ -66,6 +70,9 @@ def load_current_iteration_results(output_dir, iteration, world_size):
                     # Append new responses and scores
                     current_results[problem]["responses"].extend(sample["responses"])
                     current_results[problem]["scores"].extend(sample["scores"])
+                    count += 1
+            
+            print(f"  → Loaded {count} problems from GPU {gpu_idx}")
     
     return dict(current_results)
 
@@ -109,7 +116,7 @@ def main(cli_config):
     print(f"Found {len(previous_results)} problems from previous iterations")
     
     # Load current iteration results from all GPUs
-    print(f"Loading current iteration results from {cli_config.world_size} GPUs...")
+    print(f"\nLoading current iteration results from {cli_config.world_size} GPUs...")
     current_results = load_current_iteration_results(
         cli_config.output_dir,
         cli_config.current_iteration,
@@ -118,7 +125,7 @@ def main(cli_config):
     print(f"Found {len(current_results)} problems in current iteration")
     
     # Merge results
-    print("Merging results...")
+    print("\nMerging results...")
     merged_results = merge_with_previous(previous_results, current_results)
     
     # Save merged results

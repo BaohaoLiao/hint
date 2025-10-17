@@ -48,8 +48,16 @@ for ITER in $(seq 1 ${MAX_ITERATIONS}); do
     
     MERGE_EXIT_CODE=$?
     
-    # Check if all problems have passed (exit code 0)
-    if [ ${MERGE_EXIT_CODE} -eq 0 ]; then
+    # Check exit codes
+    if [ ${MERGE_EXIT_CODE} -eq 2 ]; then
+        echo ""
+        echo "========================================="
+        echo "ERROR: Merge failed due to missing files"
+        echo "Some GPUs did not complete successfully"
+        echo "Stopping pipeline at iteration ${ITER}"
+        echo "========================================="
+        exit 1
+    elif [ ${MERGE_EXIT_CODE} -eq 0 ]; then
         echo ""
         echo "========================================="
         echo "SUCCESS: All problems have passed!"
