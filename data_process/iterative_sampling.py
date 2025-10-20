@@ -173,7 +173,7 @@ def main(cli_config):
         seed=cli_config.seed + cli_config.iteration,
     )
 
-    ds = ds.map(make_prompt, num_proc=4)
+    ds = ds.map(make_prompt, num_proc=1)
     prompts = ds["prompt"]
     outputs = llm.generate(prompts, sampling_params=sampling_params, use_tqdm=True)
 
