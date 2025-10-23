@@ -174,6 +174,7 @@ def main(cli_config):
         max_model_len=cli_config.max_model_length,
         load_format="auto",
         seed=cli_config.seed + cli_config.iteration,
+        gpu_memory_utilization=0.9,
     )
     tokenizer = llm.get_tokenizer()
 
