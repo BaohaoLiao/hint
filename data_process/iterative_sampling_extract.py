@@ -14,7 +14,7 @@ from vllm import LLM, SamplingParams
 
 from math_verify.errors import TimeoutException
 from math_verify.metric import math_metric
-from math_verify.parser import ExprExtractionConfig, LatexExtractionConfig
+from math_verify.parser import LatexExtractionConfig
 
 
 @chz.chz
@@ -27,6 +27,7 @@ class CLIConfig:
     # model
     model_name_or_path: str = "Qwen/Qwen2.5-Math-1.5B"
     max_model_length: int = 4096
+    tensor_parallel_size : int = 1
 
     # sampling
     n: int = 8
@@ -167,6 +168,7 @@ def main(cli_config):
     # Load model
     llm = LLM(
         model=cli_config.model_name_or_path,
+        tensor_parallel_size=cli_config.tensor_parallel_size,
         tokenizer=cli_config.model_name_or_path,
         dtype="bfloat16",
         max_model_len=cli_config.max_model_length,
