@@ -227,6 +227,10 @@ def main(cli_config):
     for i, output in enumerate(outputs):
         problem = ds[i]["problem"]
         answer = ds[i]["answer"]
+        if cli_config.hint_level > 0:
+            hints = ds[i]["hints"]
+        else:
+            hints = []
         new_responses = [out.text for out in output.outputs]
 
         # Compute scores for new responses
@@ -240,6 +244,7 @@ def main(cli_config):
             {
                 "problem": problem,
                 "answer": answer,
+                "hints": hints,
                 "responses": new_responses,
                 "scores": new_scores,
                 "iteration": cli_config.iteration,
