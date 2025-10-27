@@ -117,7 +117,7 @@ def get_failed_problems(previous_results):
     failed = []
     for problem, data in previous_results.items():
         if data.get("pass@k=0", True):  # If pass@k=0 is True, means all failed
-            failed.append({"problem": problem, "answer": data["answer"]})
+            failed.append({"problem": problem, "answer": data["answer"], "hints": data.get("hints", [])})
     return failed
 
 
