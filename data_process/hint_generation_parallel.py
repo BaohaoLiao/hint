@@ -215,7 +215,7 @@ async def main_async(args):
         raise FileNotFoundError(f"Dataset file not found: {args.dataset_path}")
 
     try:
-        ds = datasets.load_dataset("json", data_files=args.dataset_path, split="train").select(range(10))
+        ds = datasets.load_dataset("json", data_files=args.dataset_path, split="train")
     except Exception as e:
         raise RuntimeError(f"Failed to load dataset: {str(e)}")
 
