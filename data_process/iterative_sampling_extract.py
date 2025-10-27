@@ -27,7 +27,7 @@ class CLIConfig:
     # model
     model_name_or_path: str = "Qwen/Qwen2.5-Math-1.5B"
     max_model_length: int = 4096
-    tensor_parallel_size : int = 1
+    tensor_parallel_size: int = 1
 
     # sampling
     n: int = 8
@@ -41,6 +41,9 @@ class CLIConfig:
     # Save
     output_dir: str = "gen_dataset"
     merged_file: str = "merged_all_iterations.json"
+
+    # Use hint
+    hint_level: int = 0  # 0: no hint, 1: level 1, 2: level 2, 3: level 3
 
 
 def extract_boxed(text: str) -> str:
@@ -185,11 +188,20 @@ def main(cli_config):
         question_suffix = (
             " Let's think step by step and output the final answer within \\boxed{}."
         )
-        question = example["problem"] + question_suffix
-        prompt_messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question},
-        ]
+
+        if cli_config.hint_level > 0:
+            hint = example["hints"][cli_config.hint_level - 1]
+            question = f"Question:\n{example['problem']}\n\nHere is a hint to help you:\n{hint}\n\n{question_suffix}"
+            prompt_messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question},
+            ]
+        else:
+            question = example["problem"] + question_suffix
+            prompt_messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": question},
+            ]
         return {
             "prompt": tokenizer.apply_chat_template(
                 prompt_messages, tokenize=False, add_generation_prompt=True
