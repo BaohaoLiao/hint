@@ -72,7 +72,7 @@ def parse_args():
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=8000,
+        default=16000,
         help="Maximum number of new tokens to generate",
     )
 
@@ -215,7 +215,7 @@ async def main_async(args):
         raise FileNotFoundError(f"Dataset file not found: {args.dataset_path}")
 
     try:
-        ds = datasets.load_dataset("json", data_files=args.dataset_path, split="train")
+        ds = datasets.load_dataset("json", data_files=args.dataset_path, split="train").select(range(10))
     except Exception as e:
         raise RuntimeError(f"Failed to load dataset: {str(e)}")
 
