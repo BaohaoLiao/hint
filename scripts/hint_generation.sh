@@ -10,6 +10,6 @@ mkdir -p ${SAVE_DIR}
 
 python -m data_process.hint_generation_parallel \
     --dataset-path ${DATA} \
-    --model-name-or-path ${MODEL} \
+    --model-name ${MODEL} \
     --output-dir ${SAVE_DIR} \
     --checkpoint-interval 10
