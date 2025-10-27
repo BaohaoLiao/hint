@@ -62,6 +62,7 @@ def load_current_iteration_results(output_dir, iteration, world_size):
                         current_results[problem] = {
                             "problem": problem,
                             "answer": sample["answer"],
+                            "hints": sample.get("hints", []),
                             "responses": [],
                             "scores": [],
                             "iteration": iteration
