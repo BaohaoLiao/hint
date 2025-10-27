@@ -9,7 +9,7 @@ SAVE_DIR="/mnt/nushare2/data/baliao/hint/data/openr1/sampling_iterative/hint_dat
 mkdir -p ${SAVE_DIR}
 
 python -m data_process.hint_generation_parallel \
-    --dataset_path ${DATA} \
-    --model_name_or_path ${MODEL} \
-    --output_dir ${SAVE_DIR} \
+    --dataset-path ${DATA} \
+    --model-name-or-path ${MODEL} \
+    --output-dir ${SAVE_DIR} \
     --checkpoint-interval 10
