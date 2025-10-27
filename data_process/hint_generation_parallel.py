@@ -269,6 +269,7 @@ async def main_async(args):
             model_name=args.model_name,
             max_completion_tokens=args.max_new_tokens,
             reasoning_effort=args.reasoning_effort,
+            response_format={"type": "json_object"},
         )
     except Exception as e:
         raise RuntimeError(f"Failed to initialize LLM: {str(e)}")
