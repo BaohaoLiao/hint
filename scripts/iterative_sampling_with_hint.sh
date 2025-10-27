@@ -8,7 +8,7 @@ MODEL_NAME="Qwen2.5-Math-1.5B"
 N=8
 MAX_ITERATIONS=16
 HINT_LEVEL=1
-SAVE_DIR="/mnt/nushare2/data/baliao/hint/data/openr1/sampling_iterative/hint_data/Qwen3-4B-Instruct-2507_passk_0/sampling_with_hints/hintlevel${HINT_LEVEL}/${MODEL_NAME}_n${N}"
+SAVE_DIR="/mnt/nushare2/data/baliao/hint/data/openr1/sampling_iterative/hint_data/Qwen3-4B-Instruct-2507_passk_0/sampling_with_hints/${MODEL_NAME}_n${N}/hintlevel${HINT_LEVEL}"
 GPUS=(0 1 2 3 4 5 6 7)
 
 mkdir -p ${SAVE_DIR}
