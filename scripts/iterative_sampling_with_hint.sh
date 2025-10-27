@@ -23,7 +23,7 @@ for ITER in $(seq 1 ${MAX_ITERATIONS}); do
     # Generate data in parallel across all GPUs
     echo "Launching ${#GPUS[@]} parallel sampling jobs..."
     for ((i=0; i<${#GPUS[@]}; i++)); do
-        CUDA_VISIBLE_DEVICES=${GPUS[$i]} python -m data_process.iterative_sampling \
+        CUDA_VISIBLE_DEVICES=${GPUS[$i]} python -m data_process.iterative_sampling_extract \
             dataset_path=${DATA} \
             world_size=${#GPUS[@]} \
             local_idx=${i} \
