@@ -21,7 +21,7 @@ mkdir -p "${ckpts_dir}/logs"
 # Trainig setting
 NGPUS=8
 train_prompt_bsz=64
-train_prompt_mini_bsz=128
+train_prompt_mini_bsz=16
 
 # Algorithm setting
 algorithm=grpo
@@ -38,6 +38,9 @@ train_path="/mnt/nushare2/data/baliao/hint/data/openr1/Qwen2.5-Math-1.5B/trainin
 test_path="/mnt/nushare2/data/baliao/hint/data/openr1/Qwen2.5-Math-1.5B/training_data/train_619.parquet"
 train_files="['$train_path']"
 test_files="['$test_path']"
+
+export WANDB_MODE="offline"
+export WANDB_DIR=${ckpts_dir}/logs
 
 
 python3 -m verl.trainer.main_ppo \
