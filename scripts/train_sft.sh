@@ -21,6 +21,7 @@ shift 2
 torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
      -m verl.trainer.fsdp_sft_trainer \
     data.train_files=${train_files} \
+    data.val_files=${train_files} \
     data.prompt_key='prompt' \
     data.response_key='solution' \
     data.max_length=4096 \
