@@ -98,6 +98,7 @@ def main():
         max_tokens=script_args.max_new_tokens,
         n=script_args.K,
         stop_token_ids=[tokenizer.eos_token_id] + script_args.eos_ids,
+        seed=script_args.seed,
     )
 
     # Load dataset and define prompt
