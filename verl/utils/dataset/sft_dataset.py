@@ -130,9 +130,6 @@ class SFTDataset(Dataset):
             self.responses = self.responses.squeeze()
         self.responses = self.responses.tolist()
 
-        print("Prompt example:\n", self.prompts[0])
-        print("Response example:\n", self.responses[0])
-
     def __len__(self):
         return len(self.prompts)
 
