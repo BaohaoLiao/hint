@@ -140,11 +140,11 @@ class SFTDataset(Dataset):
         response = self.responses[item]
 
         # apply chat template
-        prompt_chat = [{"role": "user", "content": prompt}]
+        # prompt_chat = [{"role": "user", "content": prompt}]
 
         # string
         prompt_chat_str = tokenizer.apply_chat_template(
-            prompt_chat, add_generation_prompt=True, tokenize=False, **self.apply_chat_template_kwargs
+            prompt, add_generation_prompt=True, tokenize=False, **self.apply_chat_template_kwargs
         )
         response_chat_str = response + tokenizer.eos_token
 
