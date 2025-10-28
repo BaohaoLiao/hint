@@ -3,8 +3,8 @@
 cd /data/chatgpt-training-slc-a100/data/baliao/hint/00_data_process/hint
 
 DATA="/mnt/nushare2/data/baliao/hint/data/openr1/validated.json"
-MODEL="/mnt/nushare2/data/baliao/PLLMs/qwen/Qwen2.5-Math-1.5B"
-MODEL_NAME="Qwen2.5-Math-1.5B"
+MODEL="/mnt/nushare2/data/baliao/PLLMs/meta-llama/Llama-3.2-3B-Instruct"
+MODEL_NAME="Llama-3.2-3B-Instruct"
 N=8
 SAVE_DIR="/mnt/nushare2/data/baliao/hint/data/openr1/sampling/${MODEL_NAME}_n${N}"
 GPUS=(0 1 2 3 4 5 6 7)

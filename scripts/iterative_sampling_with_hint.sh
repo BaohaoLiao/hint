@@ -7,7 +7,7 @@ MODEL="/mnt/nushare2/data/baliao/PLLMs/qwen/Qwen2.5-Math-1.5B"
 MODEL_NAME="Qwen2.5-Math-1.5B"
 N=8
 MAX_ITERATIONS=16
-HINT_LEVEL=1
+HINT_LEVEL=3
 SAVE_DIR="/mnt/nushare2/data/baliao/hint/data/openr1/sampling_iterative/hint_data/Qwen3-4B-Instruct-2507_passk_0/sampling_with_hints/${MODEL_NAME}_n${N}/hintlevel${HINT_LEVEL}"
 GPUS=(0 1 2 3 4 5 6 7)
 
@@ -19,7 +19,7 @@ for ITER in $(seq 1 ${MAX_ITERATIONS}); do
     echo "========================================"
     echo "Starting iteration ${ITER}/${MAX_ITERATIONS}..."
     echo "========================================"
-    
+
     # Generate data in parallel across all GPUs
     echo "Launching ${#GPUS[@]} parallel sampling jobs..."
     for ((i=0; i<${#GPUS[@]}; i++)); do
@@ -34,11 +34,11 @@ for ITER in $(seq 1 ${MAX_ITERATIONS}); do
             merged_file="merged_all_iterations.json" \
             hint_level=${HINT_LEVEL} &
     done
-    
+
     # Wait for all sampling jobs to complete
     wait
     echo "All sampling jobs completed for iteration ${ITER}"
-    
+
     # Merge results from all GPUs
     echo ""
     echo "Merging results from all GPUs..."
@@ -47,9 +47,9 @@ for ITER in $(seq 1 ${MAX_ITERATIONS}); do
         world_size=${#GPUS[@]} \
         output_dir=${SAVE_DIR} \
         merged_file="merged_all_iterations.json"
-    
+
     MERGE_EXIT_CODE=$?
-    
+
     # Check exit codes
     if [ ${MERGE_EXIT_CODE} -eq 2 ]; then
         echo ""
@@ -67,7 +67,7 @@ for ITER in $(seq 1 ${MAX_ITERATIONS}); do
         echo "========================================="
         break
     fi
-    
+
     echo ""
 done
 
