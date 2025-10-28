@@ -43,6 +43,7 @@ for model_name in "${models[@]}"; do
                 --local_index ${i} \
                 --my_world_size ${#GPUS[@]} \
                 --model_name_or_path ${model_name}/merged \
+                --max_input_length 4096 \
                 --output_dir ${output_dir} \
                 --K $K \
                 --dataset_name_or_path ${data_path}/${dataset} &
