@@ -61,6 +61,8 @@ from verl.utils.seqlen_balancing import calculate_workload, get_seqlen_balanced_
 from verl.utils.torch_functional import masked_mean
 from verl.utils.tracking import ValidationGenerationsLogger
 
+from recipe.hint.reward_tracker import RewardTracker
+
 
 @dataclass
 class ResourcePoolManager:
@@ -330,6 +332,9 @@ class RayHintTrainer:
             project_name=self.config.trainer.project_name,
             experiment_name=self.config.trainer.experiment_name,
         )
+
+        # Initialize reward tracker for monitoring data point rewards
+        self.reward_tracker = RewardTracker()
 
         # if ref_in_actor is True, the reference policy will be actor without lora applied
         self.ref_in_actor = (
@@ -828,6 +833,9 @@ class RayHintTrainer:
         dataloader_state_dict = self.train_dataloader.state_dict()
         torch.save(dataloader_state_dict, dataloader_local_path)
 
+        # save reward tracker
+        self.reward_tracker.save_checkpoint(local_global_step_folder)
+
         # latest checkpointed iteration tracker (for atomic usage)
         local_latest_checkpointed_iteration = os.path.join(
             self.config.trainer.default_local_dir, "latest_checkpointed_iteration.txt"
@@ -894,6 +902,9 @@ class RayHintTrainer:
             self.train_dataloader.load_state_dict(dataloader_state_dict)
         else:
             print(f"Warning: No dataloader state found at {dataloader_local_path}, will start from scratch")
+
+        # load reward tracker
+        self.reward_tracker.load_checkpoint(global_step_folder)
 
     def _start_profiling(self, do_profile: bool) -> None:
         """Start profiling for all worker groups if profiling is enabled."""
@@ -1234,6 +1245,11 @@ class RayHintTrainer:
                             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
                             config=self.config.algorithm,
                         )
+
+                        # Add reward tracking
+                        self.reward_tracker.update(batch, self.global_steps)
+                        zero_reward_stats = self.reward_tracker.get_zero_reward_stats()
+                        metrics.update(zero_reward_stats)
 
                     # update critic
                     if self.use_critic:
