@@ -62,35 +62,49 @@ class RewardTracker:
     
     def get_zero_reward_stats(self) -> Dict[str, float]:
         """Calculate statistics about data points with zero rewards.
-        
-        Returns:
-            Dictionary containing:
-                - num_total_indexes: Total number of unique data points seen
-                - num_zero_reward_indexes: Number of indexes that only have zero rewards
-                - pct_zero_reward_indexes: Percentage of indexes with only zero rewards
         """
-        total_indexes = len(self.index_to_reward_history.keys())
+        total_indexes = len(self.index_to_reward_history)
         
         if total_indexes == 0:
             return {
                 "reward_tracking/num_total_indexes": 0,
-                "reward_tracking/num_zero_reward_indexes": 0,
-                "reward_tracking/pct_zero_reward_indexes": 0.0,
             }
         
-        # Count indexes that never have non-zero reward
-        num_zero_reward = 0
-        for k, v in self.index_to_reward_history.items():
-            if all(reward == 0.0 for step, reward in v):
-                num_zero_reward += 1
-        
-        pct_zero_reward = (num_zero_reward / total_indexes) * 100.0
-        
-        return {
+        # For log
+        reward_chunks = [[] for _ in range(7)]
+        intervals = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+
+        for index, rewards in self.index_to_reward_history.items():
+            # Compute average reward for this index
+            avg_reward = sum(r for _, r in rewards) / len(rewards) if rewards else 0.0
+
+            # Bucket assignment
+            if avg_reward == 0.0:
+                reward_chunks[0].append(index)
+            elif avg_reward == 1.0:
+                reward_chunks[-1].append(index)
+            else:
+                for i in range(1, len(intervals)):
+                    if intervals[i - 1] < avg_reward <= intervals[i]:
+                        reward_chunks[i].append(index)
+                        break
+
+        interval_labels = [
+            "0", 
+            "(0-0.2]",
+            "(0.2,0.4]",
+            "(0.4,0.6]",
+            "(0.6,0.8]",
+            "(0.8,1.0)",
+            "1",
+        ]
+        results = {
             "reward_tracking/num_total_indexes": total_indexes,
-            "reward_tracking/num_zero_reward_indexes": num_zero_reward,
-            "reward_tracking/pct_zero_reward_indexs": pct_zero_reward,
         }
+        for label, chunk in zip(interval_labels, reward_chunks):
+            results[f"reward_tracking/pct_indexes_in_{label}t"] = len(chunk) / total_indexes
+        
+        return results
     
     def save_checkpoint(self, checkpoint_dir: str):
         """Save reward tracking state to disk.
@@ -141,7 +155,7 @@ class RewardTracker:
                 num_zero_reward += 1
         
         print(f"Loaded reward tracker from {checkpoint_path}")
-        print(f"  Total indexes tracked: {len(self.self.index_to_reward_history.keys())}")
+        print(f"  Total indexes tracked: {len(self.self.index_to_reward_history)}")
         print(f"  Indexes with zero reward history: {num_zero_reward}")
         
         return True
