@@ -260,7 +260,7 @@ def compute_advantage(
     return data
 
 
-class RayPPOTrainer:
+class RayHintTrainer:
     """Distributed PPO trainer using Ray for scalable reinforcement learning.
 
     This trainer orchestrates distributed PPO training across multiple nodes and GPUs,
