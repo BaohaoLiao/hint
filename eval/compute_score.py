@@ -1,3 +1,4 @@
+import re
 import json
 from dataclasses import dataclass, field
 from typing import Optional
@@ -29,6 +30,34 @@ class ScriptArguments:
     )
 
 
+def extract_boxed(text: str) -> str:
+    """
+    Extract the context of the last \\boxed{...} in the text.
+    Used for getting answers from hendrycks math
+    """
+    boxed_strs = []
+    stack = []
+    for ichar in range(len(text)):
+        if text[ichar] == "{":
+            stack.append(ichar)
+        elif text[ichar] == "}":
+            if len(stack) == 0:
+                return ""
+            last_open_start = stack.pop()
+            # check if start is preceded by \boxed
+            if text[:last_open_start].endswith("\\boxed"):
+                boxed_strs.append(text[last_open_start + 1 : ichar])
+    if len(boxed_strs) > 0:
+        return boxed_strs[-1]
+    else:
+        # maybe there's something like '\boxed 2' without curly braces
+        match = re.search(r"\\boxed\s+([a-zA-Z0-9]+)", text)
+        if match:
+            return match.group(1)
+        else:
+            return ""
+
+
 def compute_score(model_output: str, ground_truth: str, timeout_score: float = 0) -> bool:
     verify_func = math_metric(
         gold_extraction_target=(LatexExtractionConfig(),),
@@ -38,8 +67,10 @@ def compute_score(model_output: str, ground_truth: str, timeout_score: float = 0
 
     # Wrap the ground truth in \boxed{} format for verification
     ground_truth_boxed = "\\boxed{" + ground_truth + "}"
+    prediction = "\\boxed{" + extract_boxed(model_output) + "}"
+
     try:
-        ret_score, _ = verify_func([ground_truth_boxed], [model_output])
+        ret_score, _ = verify_func([ground_truth_boxed], [prediction])
     except Exception:
         pass
     except TimeoutException:
@@ -57,7 +88,7 @@ def main():
     ds = load_dataset("json", data_files=script_args.dataset_path, split="train")
 
     # Compute scores
-    is_minerva_math = "minerva_math" in script_args.dataset_path.lower()
+    is_minerva_math = False #"minerva_math" in script_args.dataset_path.lower()
 
     all_scores = []
     for i in range(len(ds)):
@@ -84,10 +115,10 @@ def main():
             sample["scores"] = all_scores[i]
             gathered_data.append(sample)
 
-    with open(script_args.dataset_path.split(".jsonl")[0] + "_score.jsonl", "w", encoding="utf8") as f:
-        for i in range(len(gathered_data)):
-            json.dump(gathered_data[i], f, ensure_ascii=False)
-            f.write("\n")
+        with open(script_args.dataset_path.split(".jsonl")[0] + "_score.jsonl", "w", encoding="utf8") as f:
+            for i in range(len(gathered_data)):
+                json.dump(gathered_data[i], f, ensure_ascii=False)
+                f.write("\n")
 
 
 if __name__ == "__main__":

@@ -13,110 +13,124 @@
 # limitations under the License.
 
 from collections import defaultdict
-from typing import Any
-
 import torch
 
 from verl import DataProto
-from verl.utils.reward_score import default_compute_score
 from verl.workers.reward_manager import register
-from verl.workers.reward_manager.abstract import AbstractRewardManager
+from verl.utils.reward_score.math_verify import parallel_compute_score
 
 
 @register("naive")
-class NaiveRewardManager(AbstractRewardManager):
+class NaiveRewardManager:
     """The reward manager."""
 
-    def __init__(self, tokenizer, num_examine, compute_score=None, reward_fn_key="data_source") -> None:
-        """
-        Initialize the NaiveRewardManager instance.
+    def __init__(
+        self,
+        tokenizer,
+        num_examine,
+        compute_score=None,
+        reward_fn_key="data_source",
+        max_resp_len=None,
+        overlong_buffer_cfg=None,
+        num_processes: int = 16,  # This now correctly controls the pool size
+    ) -> None:
+        self.tokenizer = tokenizer
+        self.num_examine = num_examine
+        self.compute_score = parallel_compute_score
+        self.reward_fn_key = reward_fn_key
+        self.overlong_buffer_cfg = overlong_buffer_cfg
+        self.max_resp_len = max_resp_len
+        self.num_processes = num_processes # Set the desired level of parallelism
 
-        Args:
-            tokenizer: The tokenizer used to decode token IDs into text.
-            num_examine: The number of batches of decoded responses to print to the console for debugging purpose.
-            compute_score: A function to compute the reward score. If None, `default_compute_score` will be used.
-            reward_fn_key: The key used to access the data source in the non-tensor batch data. Defaults to
-                "data_source".
-        """
-        self.tokenizer = tokenizer  # Store the tokenizer for decoding token IDs
-        self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
-        self.compute_score = compute_score or default_compute_score
-        self.reward_fn_key = reward_fn_key  # Store the key for accessing the data source
+        if self.overlong_buffer_cfg is not None:
+            assert self.max_resp_len is not None, f"max_resp_len must be provided if {overlong_buffer_cfg=}, but got None"
 
-    def __call__(self, data: DataProto, return_dict: bool = False) -> torch.Tensor | dict[str, Any]:
-        """We will expand this function gradually based on the available datasets"""
+    def __call__(self, data: DataProto, return_dict: bool = False):
+        """Processes the data in a single parallel call."""
 
-        # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
         if "rm_scores" in data.batch.keys():
-            if return_dict:
-                reward_extra_keys = data.meta_info.get("reward_extra_keys", [])
-                reward_extra_info = {key: data.non_tensor_batch[key] for key in reward_extra_keys}
-                return {"reward_tensor": data.batch["rm_scores"], "reward_extra_info": reward_extra_info}
-            else:
-                return data.batch["rm_scores"]
+            return {"reward_tensor": data.batch["rm_scores"]} if return_dict else data.batch["rm_scores"]
 
-        reward_tensor = torch.zeros_like(data.batch["responses"], dtype=torch.float32)
-        reward_extra_info = defaultdict(list)
-
-        already_print_data_sources = {}
+        # --- Step 1: Collect all data ---
+        model_outputs = []
+        ground_truths = []
+        metadata = []
 
         for i in range(len(data)):
-            data_item = data[i]  # DataProtoItem
-
+            data_item = data[i]
             prompt_ids = data_item.batch["prompts"]
-
             prompt_length = prompt_ids.shape[-1]
-
             valid_prompt_length = data_item.batch["attention_mask"][:prompt_length].sum()
             valid_prompt_ids = prompt_ids[-valid_prompt_length:]
-
             response_ids = data_item.batch["responses"]
             valid_response_length = data_item.batch["attention_mask"][prompt_length:].sum()
             valid_response_ids = response_ids[:valid_response_length]
-
-            # decode
             prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=True)
+            eos_token = self.tokenizer.eos_token
+            if response_str.endswith(eos_token):
+                response_str = response_str[:-len(eos_token)]
 
-            ground_truth = data_item.non_tensor_batch["reward_model"]["ground_truth"]
-            data_source = data_item.non_tensor_batch[self.reward_fn_key]
-            extra_info = data_item.non_tensor_batch.get("extra_info", {})
-            num_turns = data_item.non_tensor_batch.get("__num_turns__", None)
-            rollout_reward_scores = data_item.non_tensor_batch.get("reward_scores", {})
-            extra_info["num_turns"] = num_turns
-            extra_info["rollout_reward_scores"] = rollout_reward_scores
+            model_outputs.append(response_str)
+            ground_truths.append(data_item.non_tensor_batch["reward_model"]["ground_truth"])
+            metadata.append({
+                "original_index": i,
+                "valid_response_length": valid_response_length,
+                "prompt_str": prompt_str,
+                "response_str": response_str,
+                "ground_truth": data_item.non_tensor_batch["reward_model"]["ground_truth"],
+                "data_source": data_item.non_tensor_batch[self.reward_fn_key],
+            })
 
-            score = self.compute_score(
-                data_source=data_source,
-                solution_str=response_str,
-                ground_truth=ground_truth,
-                extra_info=extra_info,
-            )
+        # --- Step 2: Make a single, efficient parallel call ---
+        # The parallel function will correctly use self.num_processes to limit concurrency.
+        all_scores = self.compute_score(
+            model_outputs=model_outputs,
+            ground_truths=ground_truths,
+            num_processes=self.num_processes
+        )
+        print("Reward stat in RM Manager: max {:.2f}, min {:.2f}, mean {:.2f}".format(
+            max(all_scores), min(all_scores), sum(all_scores) / len(all_scores)
+        ))
 
-            if isinstance(score, dict):
-                reward = score["score"]
-                # Store the information including original reward
-                for key, value in score.items():
-                    reward_extra_info[key].append(value)
-            else:
-                reward = score
+        # --- Step 3: Assign rewards and handle logging ---
+        reward_tensor = torch.zeros_like(data.batch["responses"], dtype=torch.float32)
+        reward_extra_info = defaultdict(list)
+        already_print_data_sources = {}
 
-            reward_tensor[i, valid_response_length - 1] = reward
+        for i, score in enumerate(all_scores):
+            meta_item = metadata[i]
+            original_index = meta_item["original_index"]
+            valid_response_length = meta_item["valid_response_length"]
+            data_source = meta_item["data_source"]
+            reward = float(score)
+
+            if self.overlong_buffer_cfg and self.overlong_buffer_cfg.enable:
+                overlong_buffer_len = self.overlong_buffer_cfg.len
+                expected_len = self.max_resp_len - overlong_buffer_len
+                exceed_len = valid_response_length - expected_len
+                overlong_penalty_factor = self.overlong_buffer_cfg.penalty_factor
+                overlong_reward = min(-exceed_len / overlong_buffer_len * overlong_penalty_factor, 0)
+                reward += overlong_reward
+                if self.overlong_buffer_cfg.log:
+                    reward_extra_info["overlong_reward"].append(overlong_reward)
+                    reward_extra_info["overlong"].append(overlong_reward < 0)
+
+            if valid_response_length > 0:
+                reward_tensor[original_index, valid_response_length - 1] = reward
 
             if data_source not in already_print_data_sources:
                 already_print_data_sources[data_source] = 0
 
             if already_print_data_sources[data_source] < self.num_examine:
                 already_print_data_sources[data_source] += 1
-                print("[prompt]", prompt_str)
-                print("[response]", response_str)
-                print("[ground_truth]", ground_truth)
-                if isinstance(score, dict):
-                    for key, value in score.items():
-                        print(f"[{key}]", value)
-                else:
-                    print("[score]", score)
-
+                print("[prompt]", meta_item["prompt_str"])
+                print("[response]", meta_item["response_str"])
+                print("[ground_truth]", meta_item["ground_truth"])
+                print("[score]", score)
+        print("----"*10)
+        print(f"Reward Statistics: {(reward_tensor).max().item():.2f} (max), {(reward_tensor).min().item():.2f} (min), {(reward_tensor).mean().item():.2f} (mean)")
+        print("----"*10)
         if return_dict:
             return {
                 "reward_tensor": reward_tensor,
