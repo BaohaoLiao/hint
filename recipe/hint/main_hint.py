@@ -30,10 +30,10 @@ from verl.utils.config import validate_config
 from verl.utils.device import is_cuda_available
 from verl.utils.import_utils import load_extern_type
 
-from .hint_ray_trainer import RayHintTrainer
+from recipe.hint.hint_trainer import RayHintTrainer
 
 
-@hydra.main(config_path="config", config_name="ppo_trainer", version_base=None)
+@hydra.main(config_path="config", config_name="hint_trainer", version_base=None)
 def main(config):
     """Main entry point for PPO training with Hydra configuration management.
 
@@ -145,7 +145,7 @@ class TaskRunner:
         else:
             raise NotImplementedError
 
-        from .hint_ray_trainer import Role
+        from recipe.hint.hint_trainer import Role
 
         self.role_worker_mapping[Role.ActorRollout] = ray.remote(actor_rollout_cls)
 
@@ -170,13 +170,13 @@ class TaskRunner:
         else:
             raise NotImplementedError
 
-        from .hint_ray_trainer import Role
+        from recipe.hint.hint_trainer import Role
 
         self.role_worker_mapping[Role.Critic] = ray.remote(CriticWorker)
 
     def init_resource_pool_mgr(self, config):
         """Initialize resource pool manager."""
-        from .hint_ray_trainer import Role
+        from recipe.hint.hint_trainer import Role
 
         global_pool_id = "global_pool"
         resource_pool_spec = {
@@ -194,14 +194,14 @@ class TaskRunner:
 
         self.mapping[Role.ActorRollout] = global_pool_id
         self.mapping[Role.Critic] = global_pool_id
-        from .hint_ray_trainer import ResourcePoolManager
+        from recipe.hint.hint_trainer import ResourcePoolManager
 
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=self.mapping)
         return resource_pool_manager
 
     def add_reward_model_worker(self, config):
         """Add reward model worker if enabled."""
-        from .hint_ray_trainer import Role
+        from recipe.hint.hint_trainer import Role
 
         if config.reward_model.enable:
             use_legacy_worker_impl = config.trainer.get("use_legacy_worker_impl", "auto")
@@ -227,7 +227,7 @@ class TaskRunner:
 
     def add_ref_policy_worker(self, config, ref_policy_cls):
         """Add reference policy worker if KL loss or KL reward is used."""
-        from .hint_ray_trainer import Role
+        from recipe.hint.hint_trainer import Role
 
         if config.algorithm.use_kl_in_reward or config.actor_rollout_ref.actor.use_kl_loss:
             self.role_worker_mapping[Role.RefPolicy] = ray.remote(ref_policy_cls)
