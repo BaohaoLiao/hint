@@ -56,6 +56,10 @@ class ScriptArguments:
         default=1.0,
         metadata={"help": "the temperature"},
     )
+    top_p: Optional[float] = field(
+        default=1.0,
+        metadata={"help": "the top_p"},
+    )
     use_beam_search: Optional[bool] = field(
         default=False,
         metadata={"help": "the beam search"},
@@ -94,7 +98,7 @@ def main():
     # Define sampling params
     sampling_params = SamplingParams(
         temperature=script_args.temperature,
-        top_p=1.0,
+        top_p=script_args.top_p,
         max_tokens=script_args.max_new_tokens,
         n=script_args.K,
         stop_token_ids=[tokenizer.eos_token_id] + script_args.eos_ids,
