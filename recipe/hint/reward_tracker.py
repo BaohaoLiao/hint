@@ -102,7 +102,7 @@ class RewardTracker:
             "reward_tracking/num_total_indexes": total_indexes,
         }
         for label, chunk in zip(interval_labels, reward_chunks):
-            results[f"reward_tracking/pct_indexes_in_{label}t"] = len(chunk) / total_indexes
+            results[f"reward_tracking/pct_indexes_in_{label}"] = len(chunk) / total_indexes
         
         return results
     
