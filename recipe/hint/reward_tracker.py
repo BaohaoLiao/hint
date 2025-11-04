@@ -155,7 +155,7 @@ class RewardTracker:
                 num_zero_reward += 1
         
         print(f"Loaded reward tracker from {checkpoint_path}")
-        print(f"  Total indexes tracked: {len(self.self.index_to_reward_history)}")
+        print(f"  Total indexes tracked: {len(self.index_to_reward_history)}")
         print(f"  Indexes with zero reward history: {num_zero_reward}")
         
         return True
