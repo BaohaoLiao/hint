@@ -137,7 +137,7 @@ def main(args):
     task.add_cpu(args.cpu)
     task.add_memory(args.memory)
     task.add_file(args.script)
-    task.add_execution_parameter("requireSameRack", "true")
+    #task.add_execution_parameter("requireSameRack", "true")
     if args.rack_name is not None:
         task.add_execution_parameter(
             "nodeSelector", {"failure-domain.tess.io/rack": args.rack_name}
