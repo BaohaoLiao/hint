@@ -164,7 +164,7 @@ def main(args):
         labels=[],
     )
 
-    link = f"https://aip.vip.ebay.com/data/experiment-detail?projectName={project_name}&experimentId={experiment_id}"
+    link = f"https://aip.vip.ebay.com/data/experiment-detail?projectName={args.ems_project}&experimentId={experiment_id}"
     print(f"You can monitor progress and download result by visiting {link}")
 
 
