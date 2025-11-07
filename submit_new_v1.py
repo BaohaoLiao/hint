@@ -9,7 +9,7 @@ from pykrylov import Session, Task
 import pykrylov
 from pykrylov.util.consts import EXP_ID
 
-from utils.pykrylov_ext import DeepspeedTask
+from pykrylov_ext import DeepspeedTask
 
 os.environ["NO_PROXY"] = (
     "krylov,ams,ems,mms,localhost,127.0.0.1,.vip.ebay.com,.github.ebay.com,.tess.io,.corp.ebay.com,.ebayc3.com,.krylov-prod.svc"
