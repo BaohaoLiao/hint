@@ -31,12 +31,12 @@ def train(
     per_device_batch_size,
 ):
     init_krylov_context()
-    if model == "internvl":
-        os.chdir(get_file_path("InternVL/internvl_chat"))
-    elif model == "megatron":
-        os.chdir(get_file_path("Megatron-LM"))
-    elif model == "gpt":
-        os.chdir(get_file_path("run"))
+    # if model == "internvl":
+    #     os.chdir(get_file_path("InternVL/internvl_chat"))
+    # elif model == "megatron":
+    #     os.chdir(get_file_path("Megatron-LM"))
+    # elif model == "gpt":
+    #     os.chdir(get_file_path("run"))
 
     output = subprocess.run(
         [
