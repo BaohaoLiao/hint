@@ -184,6 +184,7 @@ def submit_train(
     task.run_on_gpu(gpus_per_node, model=gpu_model)
     task.add_cpu(cpus_per_node)
     task.add_memory(memory)
+    task.add_file(script_path)
 
     # if model == "internvl" or model == "gpt":
     #     task.add_directory("run")
