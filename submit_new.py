@@ -107,22 +107,22 @@ def main(args):
 
     # Init pykrylov task
     if args.num_nodes > 1:
-        # task = DeepspeedTask(
-        #     train,
-        #     args=[],
-        #     name=master_name,
-        #     main_service_port=MASTER_PORT,
-        #     gpu_per_worker=args.gpu_per_node,
-        #     num_workers=args.num_nodes,
-        # )
-        task = pykrylov.distributed.DistributedTask(
+        task = DeepspeedTask(
             train,
             args=[],
-            parallelism=args.num_nodes,
             name=master_name,
-            service_name=master_service_name,
-            service_port=MASTER_PORT,
+            main_service_port=MASTER_PORT,
+            gpu_per_worker=args.gpu_per_node,
+            num_workers=args.num_nodes,
         )
+        # task = pykrylov.distributed.DistributedTask(
+        #     train,
+        #     args=[],
+        #     parallelism=args.num_nodes,
+        #     name=master_name,
+        #     service_name=master_service_name,
+        #     service_port=MASTER_PORT,
+        # )
         # task = pykrylov.contrib.tasks.torch.TorchTask(
         #     train,
         #     args=[],
