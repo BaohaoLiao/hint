@@ -70,21 +70,23 @@ def init_krylov_context():
                 experiment_id,
                 runtime={"workflow": {"runId": os.environ["KRYLOV_WF_RUN_ID"]}},
             )
+        return {
+            'gpu_per_node': int(context['gpu_per_node']),
+            'num_nodes': int(context['num_nodes']),
+            'script': context['script'],
+        }
 
 
-def train(script):
-    init_krylov_context()
+def train():
+    context = init_krylov_context()
 
-    script_path = os.path.join(ROOT_DIR, script)
+    script_path = os.path.join(ROOT_DIR, context['script'])
     os.chmod(script_path, 755)
 
     output = subprocess.run(script_path, check=True)
 
     if output.returncode != 0:
         raise ValueError(f"Script exited with error {output.returncode}")
-
-
-# subprocess.run(["chmod", "-R", "a+rw", output_dir])
 
 
 def main(args):
@@ -96,6 +98,10 @@ def main(args):
     user_name = os.popen("whoami").read().rstrip()
     pykrylov.util.config.use_account(user_name, yubikey_required=True)
 
+    experiment_id = None
+    if not args.cluster == 'tess137':
+        experiment_id = pykrylov.ems.experiment.create_experiment(args.ems_project, args.exp_name)
+
     master_name = "llm_" + "".join(random.choices(string.ascii_letters, k=8))
     master_service_name = master_name + "_svc"
 
@@ -103,14 +109,14 @@ def main(args):
     if args.num_nodes > 1:
         task = DeepspeedTask(
             train,
-            args=[args.script],
+            args=[],
             name=master_name,
             main_service_port=MASTER_PORT,
             gpu_per_worker=args.gpu_per_node,
             num_workers=args.num_nodes,
         )
     else:
-        task = pykrylov.Task(train, args=[args.script])
+        task = pykrylov.Task(train, args=[])
 
     # Task setting
     task.add_task_parameters(
@@ -122,6 +128,8 @@ def main(args):
             "master_name": master_name,
             "master_service_name": master_service_name,
             "master_port": MASTER_PORT,
+            "experiment_id": experiment_id,
+            "script": os.path.basename(args.script),
         }
     )
     task.set_image(args.image)
