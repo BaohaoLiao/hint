@@ -128,7 +128,7 @@ def main(args):
         }
     )
     task.set_image(args.image)
-    task.run_on_gpu(args.gpus_per_node, model=args.pu_model)
+    task.run_on_gpu(args.gpu_per_node, model=args.pu_model)
     task.add_cpu(args.cpu)
     task.add_memory(args.memory)
     task.add_file(args.script)
