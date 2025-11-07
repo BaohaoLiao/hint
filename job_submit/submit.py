@@ -14,7 +14,7 @@ MASTER_PORT = 2020
 
 def parse_args():
     parser = argparse.ArgumentParser(description="CLI Configuration")
-    parser.add_argument("script", type=str, required=True, help="Which script to run")
+    parser.add_argument("script", type=str, help="Which script to run")
     parser.add_argument("--ems_project", type=str, default="mnist-baliao")
     parser.add_argument("--exp_name", type=str, default="test")
     parser.add_argument("--cluster", type=str, default="tess137")
