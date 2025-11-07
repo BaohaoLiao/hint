@@ -25,6 +25,7 @@ def parse_args():
     parser.add_argument("--gpu_per_node", type=int, default=1)
     parser.add_argument("--num_nodes", type=int, default=1)
     parser.add_argument("--gpu_model", type=str, default="a100")
+    parser.add_argument("--pvc", action="store_true", default=False)
     parser.add_argument(
         "--rack_name", default=None, type=str, help="Specify which rack to use"
     )
@@ -134,19 +135,20 @@ def main(args):
             "nodeSelector", {"failure-domain.tess.io/rack": args.rack_name}
         )
 
-    if args.cluster == "tess40":
-        task.mount_nfs("mtrepo", "10.5.1.56", "/krylov_shared_volume/krylov_shared")
-    if args.cluster == "tess137":
-        task.mount_pvc("mtrepo", "nlp-ebert-01", args.cluster)
-        task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
-    if args.cluster == "tess45":
-        task.mount_pvc("nushare", "krylov-user-pvc-nlp-45", args.cluster)
-        task.mount_pvc("mtrepo", "nlp-ebert-02", args.cluster)
-        task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
-    if args.cluster == "tess38":
-        task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
-        task.mount_pvc("nushare", "krylov-user-pvc-nlp-38", args.cluster)
-        task.mount_pvc("mtrepo", "nlp-ebert-02", args.cluster)
+    if args.pvc:
+        if args.cluster == "tess40":
+            task.mount_nfs("mtrepo", "10.5.1.56", "/krylov_shared_volume/krylov_shared")
+        if args.cluster == "tess137":
+            task.mount_pvc("mtrepo", "nlp-ebert-01", args.cluster)
+            task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
+        if args.cluster == "tess45":
+            task.mount_pvc("nushare", "krylov-user-pvc-nlp-45", args.cluster)
+            task.mount_pvc("mtrepo", "nlp-ebert-02", args.cluster)
+            task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
+        if args.cluster == "tess38":
+            task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
+            task.mount_pvc("nushare", "krylov-user-pvc-nlp-38", args.cluster)
+            task.mount_pvc("mtrepo", "nlp-ebert-02", args.cluster)
 
     # Submit workflow
     workflow = pykrylov.Flow(task)
