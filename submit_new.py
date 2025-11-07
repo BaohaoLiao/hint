@@ -5,7 +5,7 @@ import argparse
 import subprocess
 
 import pykrylov
-from job_submit.pykrylov_ext import DeepspeedTask
+from pykrylov_ext import DeepspeedTask
 
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
