@@ -69,17 +69,12 @@ def init_krylov_context():
                 experiment_id,
                 runtime={"workflow": {"runId": os.environ["KRYLOV_WF_RUN_ID"]}},
             )
-        return {
-            "gpu_per_node": int(context["gpu_per_node"]),
-            "num_nodes": int(context["num_nodes"]),
-            "script": context["script"],
-        }
 
 
-def train():
-    context = init_krylov_context()
+def train(script):
+    init_krylov_context()
 
-    script_path = os.path.join(ROOT_DIR, context["script"])
+    script_path = os.path.join(ROOT_DIR, script)
     os.chmod(script_path, 755)
 
     output = subprocess.run(script_path, check=True)
@@ -107,13 +102,14 @@ def main(args):
     if args.num_nodes > 1:
         task = DeepspeedTask(
             train,
+            args=[args.script],
             name=master_name,
             main_service_port=MASTER_PORT,
             gpu_per_worker=args.gpu_per_node,
             num_workers=args.num_nodes,
         )
     else:
-        task = pykrylov.Task(train, args=[])
+        task = pykrylov.Task(train, args=[args.script])
 
     # Task setting
     task.add_task_parameters(
