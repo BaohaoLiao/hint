@@ -185,14 +185,14 @@ def submit_train(
     task.add_cpu(cpus_per_node)
     task.add_memory(memory)
 
-    if model == "internvl" or model == "gpt":
-        task.add_directory("run")
-    elif model == "megatron":
-        task.add_directory("Megatron-LM")
-    else:
-        raise (ValueError(f"Unrecognized model: {model}"))
+    # if model == "internvl" or model == "gpt":
+    #     task.add_directory("run")
+    # elif model == "megatron":
+    #     task.add_directory("Megatron-LM")
+    # else:
+    #     raise (ValueError(f"Unrecognized model: {model}"))
 
-    task.add_directory("utils")
+    # task.add_directory("utils")
 
     workflow = pykrylov.Flow(task)
     workflow.execution_parameters.add_execution_parameter("enableChooseCluster", "true")
