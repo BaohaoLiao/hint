@@ -178,7 +178,7 @@ def main(args):
             task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
         if args.cluster == "tess38":
             task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
-            task.mount_pvc("nushare", "krylov-user-pvc-nlp-38", args.cluster)
+            #task.mount_pvc("nushare", "krylov-user-pvc-nlp-38", args.cluster)
             task.mount_pvc("mtrepo", "nlp-ebert-02", args.cluster)
 
     # Submit workflow
