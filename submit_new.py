@@ -149,10 +149,6 @@ def main(args):
         }
     )
     task.set_image(args.image)
-    # if args.cluster == "tess38" and args.gpu_per_node > 0:
-    #     task.add_execution_parameter('accelerator', {'type': 'gpu', 'quantity': str(args.gpu_per_node), 'model': 'h100'})
-    #     task.add_execution_parameter("nodeSelector", {"sku": "gpu3g10"})
-    # else:
     task.run_on_gpu(args.gpu_per_node, model=args.gpu_model)
     task.add_cpu(args.cpu)
     task.add_memory(args.memory)
