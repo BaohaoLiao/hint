@@ -153,7 +153,7 @@ def main(args):
     task.add_cpu(args.cpu)
     task.add_memory(args.memory)
     task.add_file(args.script)
-    #task.add_execution_parameter("requireSameRack", "true")
+    task.add_execution_parameter("requireSameRack", "true")
     if args.rack_name is not None:
         task.add_execution_parameter(
             "nodeSelector", {"failure-domain.tess.io/rack": args.rack_name}
@@ -173,6 +173,9 @@ def main(args):
             task.mount_pvc("nushare2", "krylov-user-pvc-nlp-01", args.cluster)
             task.mount_pvc("nushare", "krylov-user-pvc-nlp-38", args.cluster)
             task.mount_pvc("mtrepo", "nlp-ebert-02", args.cluster)
+
+            # For H100
+            task.add_execution_parameter("nodeSelector", {"sku": "gpu3g10"})
 
     # Submit workflow
     workflow = pykrylov.Flow(task)
