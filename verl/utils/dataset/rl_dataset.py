@@ -253,7 +253,7 @@ class RLHFDataset(Dataset):
         """
         row_dict: dict = self.dataframe[item]
         messages = self._build_messages(row_dict)
-        messages_nohint = row_dict["prompt"]
+        messages_nohint = row_dict["prompt_with_hint_level_0"]
         model_inputs = {}
 
         if self.processor is not None:
