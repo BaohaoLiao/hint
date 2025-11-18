@@ -519,7 +519,14 @@ class RayHintTrainer:
         reward_model_keys = set({"data_source", "reward_model", "extra_info", "uid"}) & batch.non_tensor_batch.keys()
 
         # pop those keys for generation
-        batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
+        batch_keys_to_pop = [
+            "input_ids",
+            "attention_mask",
+            "position_ids",
+            "input_ids_nohint",
+            "attention_mask_nohint",
+            "position_ids_nohint",
+        ]
         non_tensor_batch_keys_to_pop = set(batch.non_tensor_batch.keys()) - reward_model_keys
         gen_batch = batch.pop(
             batch_keys=batch_keys_to_pop,
@@ -1189,6 +1196,13 @@ class RayHintTrainer:
                             from verl.utils.debug.metrics import calculate_debug_metrics
 
                             metrics.update(calculate_debug_metrics(batch))
+
+                    # Remove all with hint
+                    keys_to_reassign = ["prompts", "input_ids", "attention_mask", "position_ids"]
+                    for key in keys_to_reassign:
+                        assert key in batch.batch.keys(), f"{key} not in batch"
+                        batch.batch[key] = batch.batch[f"{key}_nohint"]
+                        del batch.batch[f"{key}_nohint"]
 
                     if self.use_reference_policy:
                         # compute reference log_prob
