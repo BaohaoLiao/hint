@@ -1197,12 +1197,12 @@ class RayHintTrainer:
 
                             metrics.update(calculate_debug_metrics(batch))
 
-                    # Remove all with hint
-                    keys_to_reassign = ["prompts", "input_ids", "attention_mask", "position_ids"]
-                    for key in keys_to_reassign:
-                        assert key in batch.batch.keys(), f"{key} not in batch"
-                        batch.batch[key] = batch.batch[f"{key}_nohint"]
-                        del batch.batch[f"{key}_nohint"]
+                    # # Remove all with hint
+                    # keys_to_reassign = ["prompts", "input_ids", "attention_mask", "position_ids"]
+                    # for key in keys_to_reassign:
+                    #     assert key in batch.batch.keys(), f"{key} not in batch"
+                    #     batch.batch[key] = batch.batch[f"{key}_nohint"]
+                    #     del batch.batch[f"{key}_nohint"]
 
                     if self.use_reference_policy:
                         # compute reference log_prob

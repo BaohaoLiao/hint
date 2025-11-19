@@ -430,15 +430,15 @@ class vLLMRollout(BaseRollout):
         # all the tp ranks should contain the same data here. data in all ranks are valid
         batch = TensorDict(
             {
-                "prompts": idx,
+                # "prompts": idx,
                 "responses": response,
-                "input_ids": seq,  # here input_ids become the whole sentences
-                "attention_mask": attention_mask,
-                "position_ids": position_ids,
-                "prompts_nohint": idx_nohint,
-                "input_ids_nohint": seq_nohint,
-                "attention_mask_nohint": attention_mask_nohint,
-                "position_ids_nohint": position_ids_nohint,
+                # "input_ids": seq,  # here input_ids become the whole sentences
+                # "attention_mask": attention_mask,
+                # "position_ids": position_ids,
+                "prompts": idx_nohint,
+                "input_ids": seq_nohint,
+                "attention_mask": attention_mask_nohint,
+                "position_ids": position_ids_nohint,
             },
             batch_size=batch_size,
         )
