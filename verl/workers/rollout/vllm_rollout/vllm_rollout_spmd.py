@@ -303,6 +303,10 @@ class vLLMRollout(BaseRollout):
         attention_mask = prompts.batch["attention_mask"]
         position_ids = prompts.batch["position_ids"]
 
+        idx_nohint = prompts.batch["input_ids_nohint"]
+        attention_mask_nohint = prompts.batch["attention_mask_nohint"]
+        position_ids_nohint = prompts.batch["position_ids_nohint"]
+
         # used to construct attention_mask
         eos_token_id = prompts.meta_info["eos_token_id"]
 
@@ -400,6 +404,7 @@ class vLLMRollout(BaseRollout):
                 rollout_log_probs = rollout_log_probs.to(torch.float32)
 
             seq = torch.cat([idx, response], dim=-1)
+            seq_nohint = torch.cat([idx_nohint, response], dim=-1)
 
         response_length = response.size(1)
         delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)
@@ -418,14 +423,22 @@ class vLLMRollout(BaseRollout):
         )
         attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
 
+        response_position_ids_nohint = position_ids_nohint[..., -1:] + delta_position_id
+        position_ids_nohint = torch.cat([position_ids_nohint, response_position_ids_nohint], dim=-1)
+        attention_mask_nohint = torch.cat((attention_mask_nohint, response_attention_mask), dim=-1)
+
         # all the tp ranks should contain the same data here. data in all ranks are valid
         batch = TensorDict(
             {
-                "prompts": idx,
+                # "prompts": idx,
                 "responses": response,
-                "input_ids": seq,  # here input_ids become the whole sentences
-                "attention_mask": attention_mask,
-                "position_ids": position_ids,
+                # "input_ids": seq,  # here input_ids become the whole sentences
+                # "attention_mask": attention_mask,
+                # "position_ids": position_ids,
+                "prompts": idx_nohint,
+                "input_ids": seq_nohint,
+                "attention_mask": attention_mask_nohint,
+                "position_ids": position_ids_nohint,
             },
             batch_size=batch_size,
         )

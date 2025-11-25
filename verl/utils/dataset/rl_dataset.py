@@ -253,6 +253,7 @@ class RLHFDataset(Dataset):
         """
         row_dict: dict = self.dataframe[item]
         messages = self._build_messages(row_dict)
+        messages_nohint = row_dict["prompt_with_hint_level_0"]
         model_inputs = {}
 
         if self.processor is not None:
@@ -313,9 +314,27 @@ class RLHFDataset(Dataset):
             input_ids = model_inputs.pop("input_ids")
             attention_mask = model_inputs.pop("attention_mask")
 
+            raw_prompt_nohint = self.tokenizer.apply_chat_template(
+                messages_nohint,
+                add_generation_prompt=True,
+                tokenize=False,
+                **self.apply_chat_template_kwargs,
+            )
+            model_inputs_nohint = self.tokenizer(raw_prompt_nohint, return_tensors="pt", add_special_tokens=False)
+            input_ids_nohint = model_inputs_nohint.pop("input_ids")
+            attention_mask_nohint = model_inputs_nohint.pop("attention_mask")
+
         input_ids, attention_mask = verl_F.postprocess_data(
             input_ids=input_ids,
             attention_mask=attention_mask,
+            max_length=self.max_prompt_length,
+            pad_token_id=self.tokenizer.pad_token_id,
+            left_pad=True,
+            truncation=self.truncation,
+        )
+        input_ids_nohint, attention_mask_nohint = verl_F.postprocess_data(
+            input_ids=input_ids_nohint,
+            attention_mask=attention_mask_nohint,
             max_length=self.max_prompt_length,
             pad_token_id=self.tokenizer.pad_token_id,
             left_pad=True,
@@ -357,10 +376,15 @@ class RLHFDataset(Dataset):
             position_ids = [torch.cat((text_position_ids, vision_position_ids), dim=0)]  # (1, 4, seq_length)
         else:
             position_ids = compute_position_id_with_mask(attention_mask)
+            position_ids_nohint = compute_position_id_with_mask(attention_mask_nohint)
 
         row_dict["input_ids"] = input_ids[0]
         row_dict["attention_mask"] = attention_mask[0]
         row_dict["position_ids"] = position_ids[0]
+
+        row_dict["input_ids_nohint"] = input_ids_nohint[0]
+        row_dict["attention_mask_nohint"] = attention_mask_nohint[0]
+        row_dict["position_ids_nohint"] = position_ids_nohint[0]
 
         raw_prompt_ids = self.tokenizer.encode(raw_prompt, add_special_tokens=False)
         if len(raw_prompt_ids) > self.max_prompt_length:
@@ -374,15 +398,32 @@ class RLHFDataset(Dataset):
                 raw_prompt_ids = raw_prompt_ids[:left_half] + raw_prompt_ids[-right_half:]
             elif self.truncation == "error":
                 raise RuntimeError(f"Prompt length {len(raw_prompt_ids)} is longer than {self.max_prompt_length}.")
+            
+        raw_prompt_ids_nohint = self.tokenizer.encode(raw_prompt_nohint, add_special_tokens=False)
+        if len(raw_prompt_ids_nohint) > self.max_prompt_length:
+            if self.truncation == "left":
+                raw_prompt_ids_nohint = raw_prompt_ids_nohint[-self.max_prompt_length :]
+            elif self.truncation == "right":
+                raw_prompt_ids_nohint = raw_prompt_ids_nohint[: self.max_prompt_length]
+            elif self.truncation == "middle":
+                left_half = self.max_prompt_length // 2
+                right_half = self.max_prompt_length - left_half
+                raw_prompt_ids_nohint = raw_prompt_ids_nohint[:left_half] + raw_prompt_ids_nohint[-right_half:]
+            elif self.truncation == "error":
+                raise RuntimeError(f"Prompt length {len(raw_prompt_ids_nohint)} is longer than {self.max_prompt_length}.")
 
         row_dict["raw_prompt_ids"] = raw_prompt_ids
+        row_dict["raw_prompt_ids_nohint"] = raw_prompt_ids_nohint
+
         # encode prompts without chat template
         if self.return_raw_chat:
             row_dict["raw_prompt"] = messages
+            row_dict["raw_prompt_nohint"] = messages_nohint
 
         # get prompts with chat template
         if self.return_full_prompt:
             row_dict["full_prompts"] = raw_prompt  # array of strings
+            row_dict["full_prompts_nohint"] = raw_prompt_nohint  # array of strings
 
         # add index for each prompt
         if "extra_info" not in row_dict or row_dict["extra_info"] is None:
