@@ -279,12 +279,30 @@ async def main_async(args):
 
             We keep this synchronous and run it in a thread via asyncio.to_thread.
             """
+            hint_schema = {
+                "type": "object",
+                "properties": {
+                    "level_1": {"type": "string"},
+                    "level_2": {"type": "string"},
+                    "level_3": {"type": "string"}
+                },
+                "required": ["level_1", "level_2", "level_3"],
+                "additionalProperties": False
+            }
+            
             completion = llm_client.chat.completions.create(
                 model=args.model_name,
                 messages=messages,
                 temperature=args.temperature,
                 top_p=args.top_p,
                 max_tokens=args.max_new_tokens,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "hint",
+                        "schema": hint_schema
+                    },
+                },
                 extra_body={"top_k": args.top_k, "min_p": args.min_p},
             )
             return completion.choices[0].message.content
