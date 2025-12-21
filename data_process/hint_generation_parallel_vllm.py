@@ -154,10 +154,9 @@ async def generate_hint_async(
     """
     for attempt in range(max_retries):
         try:
-            # Note: If AzureOpenAIChatWrapper doesn't support async natively,
-            # we use asyncio.to_thread to run it in a thread pool
+            # The client call is synchronous; run it in a thread to avoid blocking
             response = await asyncio.to_thread(llm, message)
-            hint = response.content
+            hint = response if isinstance(response, str) else response.content
 
             if not hint or not hint.strip():
                 raise ValueError("Empty response from LLM")
@@ -268,11 +267,27 @@ async def main_async(args):
     # Initialize LLM
     print(f"Initializing LLM: {args.model_name}")
     try:
-        llm = OpenAI(
+        llm_client = OpenAI(
             base_url=args.base_url,
             api_key="vllm",
             timeout=360,
         )
+
+        def llm_call(messages: List[Dict[str, str]]) -> str:
+            """
+            Invoke vLLM with sampling controls.
+
+            We keep this synchronous and run it in a thread via asyncio.to_thread.
+            """
+            completion = llm_client.chat.completions.create(
+                model=args.model_name,
+                messages=messages,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                max_tokens=args.max_new_tokens,
+                extra_body={"top_k": args.top_k, "min_p": args.min_p},
+            )
+            return completion.choices[0].message.content
     except Exception as e:
         raise RuntimeError(f"Failed to initialize LLM: {str(e)}")
 
@@ -283,7 +298,7 @@ async def main_async(args):
     print(f"Generating hints with {args.max_concurrent} concurrent requests...")
 
     tasks = [
-        process_sample(llm, sample, args.max_retries, args.retry_delay, semaphore)
+        process_sample(llm_call, sample, args.max_retries, args.retry_delay, semaphore)
         for sample in samples
     ]
 
