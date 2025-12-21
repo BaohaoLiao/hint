@@ -161,6 +161,25 @@ async def generate_hint_async(
             if not hint or not hint.strip():
                 raise ValueError("Empty response from LLM")
 
+            # Validate JSON parsing
+            try:
+                hint_data = json.loads(hint)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Failed to parse JSON: {str(e)}")
+
+            # Validate all required levels are present
+            required_levels = ["level_1", "level_2", "level_3"]
+            missing_levels = [level for level in required_levels if level not in hint_data]
+
+            if missing_levels:
+                raise ValueError(f"Missing required hint levels: {', '.join(missing_levels)}")
+
+            # Validate that all levels have non-empty content
+            empty_levels = [level for level in required_levels if not hint_data[level] or not str(hint_data[level]).strip()]
+
+            if empty_levels:
+                raise ValueError(f"Empty content in hint levels: {', '.join(empty_levels)}")
+
             return {"success": True, "hint": hint, "error": None}
 
         except Exception as e:
