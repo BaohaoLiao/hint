@@ -2,7 +2,6 @@
 
 # CKPT directory
 model_name=Qwen2.5-Math-1.5B
-project_name=hint
 hint_level=1
 experiment_name=Hint${hint_level}_${model_name}
 ckpts_dir=/mnt/nushare2/data/baliao/hint/02_rl_level/${experiment_name}

@@ -110,13 +110,11 @@ def main():
         ds = load_from_disk(script_args.dataset_name_or_path)["train"]
     else:
         ds = load_dataset(script_args.dataset_name_or_path, split="train")
-    instruction_following = "Let's think step by step and output the final answer within \\boxed{}."
-    system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
 
     # Process dataset to make prompts
+    system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
     def make_prompt(example):
         question = example["problem"]
-        question = question + " " + instruction_following
         prompt_messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
         return {"prompt": tokenizer.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)}
 
