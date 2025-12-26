@@ -88,7 +88,7 @@ def main():
     ds = load_dataset("json", data_files=script_args.dataset_path, split="train")
 
     # Compute scores
-    is_minerva_math = "minerva_math" in script_args.dataset_path.lower()
+    is_minerva_math = False #"minerva_math" in script_args.dataset_path.lower()
 
     all_scores = []
     for i in range(len(ds)):
