@@ -25,7 +25,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pprint import pprint
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import ray
@@ -58,10 +58,44 @@ from verl.utils.debug import marked_timer
 from verl.utils.metric import reduce_metrics
 from verl.utils.rollout_skip import RolloutSkip
 from verl.utils.seqlen_balancing import calculate_workload, get_seqlen_balanced_partitions, log_seqlen_unbalance
-from verl.utils.torch_functional import masked_mean
+from verl.utils.torch_functional import masked_mean, postprocess_data
 from verl.utils.tracking import ValidationGenerationsLogger
+from verl.utils.model import compute_position_id_with_mask
 
 from recipe.hint.reward_tracker import RewardTracker
+
+HINT_SYSTEM_PROMPT = """You are a tutoring assistant that generates progressive hints to help students solve difficult problems without revealing the solution directly.
+
+TASK:
+Given a question and its solution, generate 3 levels of hints that progressively guide the student toward solving the problem independently.
+
+HINT LEVELS:
+- Level 1: Minimal hint - Points to the key concept or approach without specifics
+- Level 2: Medium hint - Provides more direction on the method or intermediate steps
+- Level 3: Detailed hint - Gives substantial guidance while still requiring the student to complete the solution
+
+GUIDELINES:
+- Never reveal the final answer
+- Hints should inspire problem-solving, not just provide steps to copy
+- Tailor hint difficulty to bridge the gap between the student's level and the solution
+
+OUTPUT FORMAT:
+```json
+{
+    "level_1": "minimal hint text",
+    "level_2": "medium hint text",
+    "level_3": "detailed hint text"
+}
+```"""
+
+HINT_USER_PROMPT_TEMPLATE = """Question: 
+{problem}
+
+Solution:
+{solution}
+"""
+
+ANSWER_SYSTEM_PROMPT = "Please reason step by step, and put your final answer within \\boxed{}."
 
 
 @dataclass
@@ -515,12 +549,231 @@ class RayHintTrainer:
         # Log to each configured logger
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
 
+    def _build_hint_messages(self, question: str, solution: str) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": HINT_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": HINT_USER_PROMPT_TEMPLATE.format(problem=question, solution=solution),
+            },
+        ]
+
+    def _prepare_prompt_inputs(
+        self, messages: list[dict[str, str]]
+    ) -> Optional[tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[int], str]]:
+        try:
+            apply_kwargs = self.config.data.get("apply_chat_template_kwargs", {})
+            raw_prompt = self.tokenizer.apply_chat_template(
+                messages, add_generation_prompt=True, tokenize=False, **apply_kwargs
+            )
+            model_inputs = self.tokenizer(raw_prompt, return_tensors="pt", add_special_tokens=False)
+            input_ids = model_inputs["input_ids"]
+            attention_mask = model_inputs["attention_mask"]
+            input_ids, attention_mask = postprocess_data(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                max_length=self.config.data.max_prompt_length,
+                pad_token_id=self.tokenizer.pad_token_id,
+                left_pad=True,
+                truncation=self.config.data.get("truncation", "error"),
+            )
+            position_ids = compute_position_id_with_mask(attention_mask)
+            raw_prompt_ids = [tid for tid, mask_val in zip(input_ids[0].tolist(), attention_mask[0].tolist()) if mask_val]
+            return input_ids, attention_mask, position_ids, raw_prompt_ids, raw_prompt
+        except Exception as e:
+            print(f"Failed to build prompt inputs: {e}")
+            return None
+
+    def _parse_hint_payload(self, hint_text: str) -> Optional[dict[str, Any]]:
+        try:
+            return json.loads(hint_text)
+        except json.JSONDecodeError:
+            start = hint_text.find("{")
+            end = hint_text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    return json.loads(hint_text[start : end + 1])
+                except Exception:
+                    return None
+            return None
+        except Exception:
+            return None
+
+    def _generate_hints_batch(
+        self, requests: list[tuple[int, str, str]], max_retries: int = 5
+    ) -> dict[int, dict[str, Any]]:
+        """Generate full hint payloads (all levels) for multiple questions in one batch with retries."""
+        prepared: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[int]]] = {}
+        for idx, question, solution in requests:
+            prompt_inputs = self._prepare_prompt_inputs(self._build_hint_messages(question, solution))
+            if prompt_inputs is None:
+                continue
+            prepared[idx] = prompt_inputs[:4]
+
+        if not prepared:
+            return {}
+
+        hints: dict[int, dict[str, Any]] = {}
+        remaining = list(prepared.keys())
+        attempt = 0
+        while remaining and attempt < max_retries:
+            tensors = [prepared[idx] for idx in remaining]
+            input_ids = torch.cat([item[0] for item in tensors], dim=0)
+            attention_mask = torch.cat([item[1] for item in tensors], dim=0)
+            position_ids = torch.cat([item[2] for item in tensors], dim=0)
+            raw_prompt_ids = np.array([item[3] for item in tensors], dtype=object)
+
+            hint_batch = DataProto.from_dict(
+                tensors={
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "position_ids": position_ids,
+                },
+                non_tensors={"raw_prompt_ids": raw_prompt_ids},
+                meta_info={"global_steps": self.global_steps},
+            )
+            hint_batch.meta_info["recompute_log_prob"] = False
+            hint_batch.meta_info["validate"] = True
+            hint_batch.meta_info["do_sample"] = True
+
+            if not self.async_rollout_mode:
+                hint_output = self.actor_rollout_wg.generate_sequences(hint_batch)
+            else:
+                hint_output = self.async_rollout_manager.generate_sequences(hint_batch)
+
+            if "responses" not in hint_output.batch.keys():
+                break
+
+            next_remaining = []
+            for i, idx in enumerate(remaining):
+                hint_response = hint_output.batch["responses"][i]
+                hint_text = self.tokenizer.decode(hint_response, skip_special_tokens=True).strip()
+                hint_payload = self._parse_hint_payload(hint_text)
+                if hint_payload:
+                    hints[idx] = hint_payload
+                else:
+                    next_remaining.append(idx)
+
+            remaining = next_remaining
+            attempt += 1
+        return hints
+
+    def _build_answer_messages_with_hint(self, question: str, hint_text: str) -> list[dict[str, str]]:
+        user_content = (
+            f"Question:\n{question}\n\nHere is a hint to help you:\n{hint_text}"
+        )
+        return [
+            {"role": "system", "content": ANSWER_SYSTEM_PROMPT},
+            {"role": "user", "content": user_content},
+        ]
+
+    def _extract_question_and_solution(
+        self, base_batch: DataProto, gen_batch: DataProto, idx: int
+    ) -> tuple[Optional[str], Optional[str]]:
+        non_tensor_batch = base_batch.non_tensor_batch
+
+        question = None
+        for key in ("problem", "question"):
+            if key in non_tensor_batch:
+                value = non_tensor_batch[key][idx]
+                if isinstance(value, str) and value.strip():
+                    question = value.strip()
+                    break
+
+        solution = None
+        if "solution" in non_tensor_batch:
+            value = non_tensor_batch["solution"][idx]
+            if isinstance(value, str) and value.strip():
+                solution = value.strip()
+        if solution is None and "answer" in non_tensor_batch:
+            value = non_tensor_batch["answer"][idx]
+            if isinstance(value, str) and value.strip():
+                solution = value.strip()
+        if solution is None and "reward_model" in non_tensor_batch:
+            reward_info = non_tensor_batch["reward_model"][idx]
+            if isinstance(reward_info, dict):
+                for key in ("solution", "ground_truth", "answer"):
+                    value = reward_info.get(key)
+                    if isinstance(value, str) and value.strip():
+                        solution = value.strip()
+                        break
+
+        if question is None and "raw_prompt_ids" in gen_batch.non_tensor_batch:
+            try:
+                question = self.tokenizer.decode(gen_batch.non_tensor_batch["raw_prompt_ids"][idx], skip_special_tokens=True).strip()
+            except Exception:
+                question = None
+
+        return question, solution
+
+    def _apply_hints_to_gen_batch(
+        self,
+        gen_batch: DataProto,
+        base_batch: DataProto,
+        need_hint_indices: list[int],
+        hint_payloads: dict[int, dict[str, Any]],
+        level_key: str,
+    ) -> Optional[tuple[DataProto, list[int]]]:
+        if not need_hint_indices:
+            return None
+
+        requests: list[tuple[int, str, str]] = []
+        question_map: dict[int, str] = {}
+        for idx in need_hint_indices:
+            question, solution = self._extract_question_and_solution(base_batch, gen_batch, idx)
+            if question and solution:
+                requests.append((idx, question, solution))
+                question_map[idx] = question
+
+        updated_gen_batch = deepcopy(gen_batch)
+        applied_indices: list[int] = []
+
+        for idx in need_hint_indices:
+            payload = hint_payloads.get(idx, {})
+            hint_text = payload.get(level_key, "")
+            if not hint_text:
+                continue
+            question = question_map.get(idx)
+            if not question:
+                continue
+            prompt_inputs = self._prepare_prompt_inputs(self._build_answer_messages_with_hint(question, hint_text))
+            if prompt_inputs is None:
+                continue
+            input_ids, attention_mask, position_ids, raw_prompt_ids, _ = prompt_inputs
+
+            updated_gen_batch.batch["input_ids"][idx] = input_ids[0]
+            updated_gen_batch.batch["attention_mask"][idx] = attention_mask[0]
+            updated_gen_batch.batch["position_ids"][idx] = position_ids[0]
+
+            if "raw_prompt_ids" not in updated_gen_batch.non_tensor_batch:
+                updated_gen_batch.non_tensor_batch["raw_prompt_ids"] = np.array(
+                    [None for _ in range(len(updated_gen_batch))], dtype=object
+                )
+            updated_gen_batch.non_tensor_batch["raw_prompt_ids"][idx] = raw_prompt_ids
+            applied_indices.append(idx)
+
+        if not applied_indices:
+            return None
+        return updated_gen_batch, applied_indices
+
+    def _replace_slices(self, target: DataProto, source: DataProto, indices: list[int], repeat: int):
+        """Replace rollout slices for specific questions from source into target."""
+        for idx in indices:
+            start = idx * repeat
+            end = start + repeat
+            for key in target.batch.keys():
+                target.batch[key][start:end] = source.batch[key][start:end]
+            for key in target.non_tensor_batch.keys():
+                if key in source.non_tensor_batch:
+                    target.non_tensor_batch[key][start:end] = source.non_tensor_batch[key][start:end]
+
     def _get_gen_batch(self, batch: DataProto) -> DataProto:
         reward_model_keys = set({"data_source", "reward_model", "extra_info", "uid"}) & batch.non_tensor_batch.keys()
+        hint_context_keys = {"problem", "question", "solution", "answer", "index"}
 
         # pop those keys for generation
         batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
-        non_tensor_batch_keys_to_pop = set(batch.non_tensor_batch.keys()) - reward_model_keys
+        non_tensor_batch_keys_to_pop = set(batch.non_tensor_batch.keys()) - reward_model_keys - hint_context_keys
         gen_batch = batch.pop(
             batch_keys=batch_keys_to_pop,
             non_tensor_batch_keys=list(non_tensor_batch_keys_to_pop),
@@ -1099,78 +1352,166 @@ class RayHintTrainer:
 
                 # pass global_steps to trace
                 gen_batch.meta_info["global_steps"] = self.global_steps
-                gen_batch_output = gen_batch.repeat(
-                    repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True
-                )
-
+                base_batch = deepcopy(batch)
+                base_gen_batch = deepcopy(gen_batch)
                 is_last_step = self.global_steps >= self.total_training_steps
                 with marked_timer("step", timing_raw):
-                    # generate a batch
-                    with marked_timer("gen", timing_raw, color="red"):
-                        if not self.async_rollout_mode:
-                            gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch_output)
-                        else:
-                            gen_batch_output = self.async_rollout_manager.generate_sequences(gen_batch_output)
+                    rollout_repeat = self.config.actor_rollout_ref.rollout.n
 
-                        timing_raw.update(gen_batch_output.meta_info["timing"])
-                        gen_batch_output.meta_info.pop("timing", None)
+                    hint_applied_prompts: set[int] = set()
+                    hint_level_usage = {"level_1": 0, "level_2": 0, "level_3": 0}
 
-                    if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
-                        if self.reward_fn is None:
-                            raise ValueError("A reward_fn is required for REMAX advantage estimation.")
+                    def run_rollout(gen_batch_for_run: DataProto):
+                        gen_batch_output = gen_batch_for_run.repeat(repeat_times=rollout_repeat, interleave=True)
 
-                        with marked_timer("gen_max", timing_raw, color="purple"):
-                            gen_baseline_batch = deepcopy(gen_batch)
-                            gen_baseline_batch.meta_info["do_sample"] = False
+                        with marked_timer("gen", timing_raw, color="red"):
                             if not self.async_rollout_mode:
-                                gen_baseline_output = self.actor_rollout_wg.generate_sequences(gen_baseline_batch)
+                                gen_batch_output_out = self.actor_rollout_wg.generate_sequences(gen_batch_output)
                             else:
-                                gen_baseline_output = self.async_rollout_manager.generate_sequences(gen_baseline_batch)
-                            batch = batch.union(gen_baseline_output)
-                            # compute reward model score on batch
-                            rm_scores = None
-                            if self.use_rm and "rm_scores" not in batch.batch.keys():
-                                rm_scores = self.rm_wg.compute_rm_score(batch)
-                                batch = batch.union(rm_scores)
-                            reward_baseline_tensor, _ = compute_reward(batch, self.reward_fn)
-                            reward_baseline_tensor = reward_baseline_tensor.sum(dim=-1)
+                                gen_batch_output_out = self.async_rollout_manager.generate_sequences(gen_batch_output)
 
-                            keys_to_pop = set(gen_baseline_output.batch.keys())
-                            if rm_scores is not None:
-                                keys_to_pop.update(rm_scores.batch.keys())
-                            batch.pop(batch_keys=list(keys_to_pop))
+                            timing_raw.update(gen_batch_output_out.meta_info["timing"])
+                            gen_batch_output_out.meta_info.pop("timing", None)
 
-                            batch.batch["reward_baselines"] = reward_baseline_tensor
+                        working_batch = deepcopy(base_batch)
 
-                            del rm_scores, gen_baseline_batch, gen_baseline_output
-                    # repeat to align with repeated responses in rollout
-                    batch = batch.repeat(repeat_times=self.config.actor_rollout_ref.rollout.n, interleave=True)
-                    batch = batch.union(gen_batch_output)
+                        if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
+                            if self.reward_fn is None:
+                                raise ValueError("A reward_fn is required for REMAX advantage estimation.")
 
-                    if "response_mask" not in batch.batch.keys():
-                        batch.batch["response_mask"] = compute_response_mask(batch)
-                    # Balance the number of valid tokens across DP ranks.
-                    # NOTE: This usually changes the order of data in the `batch`,
-                    # which won't affect the advantage calculation (since it's based on uid),
-                    # but might affect the loss calculation (due to the change of mini-batching).
-                    if self.config.trainer.balance_batch:
-                        self._balance_batch(batch, metrics=metrics)
+                            with marked_timer("gen_max", timing_raw, color="purple"):
+                                gen_baseline_batch = deepcopy(gen_batch_for_run)
+                                gen_baseline_batch.meta_info["do_sample"] = False
+                                if not self.async_rollout_mode:
+                                    gen_baseline_output = self.actor_rollout_wg.generate_sequences(gen_baseline_batch)
+                                else:
+                                    gen_baseline_output = self.async_rollout_manager.generate_sequences(
+                                        gen_baseline_batch
+                                    )
+                                working_batch = working_batch.union(gen_baseline_output)
+                                rm_scores = None
+                                if self.use_rm and "rm_scores" not in working_batch.batch.keys():
+                                    rm_scores = self.rm_wg.compute_rm_score(working_batch)
+                                    working_batch = working_batch.union(rm_scores)
+                                reward_baseline_tensor, _ = compute_reward(working_batch, self.reward_fn)
+                                reward_baseline_tensor = reward_baseline_tensor.sum(dim=-1)
 
-                    # compute global_valid tokens
-                    batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
+                                keys_to_pop = set(gen_baseline_output.batch.keys())
+                                if rm_scores is not None:
+                                    keys_to_pop.update(rm_scores.batch.keys())
+                                working_batch.pop(batch_keys=list(keys_to_pop))
 
-                    with marked_timer("reward", timing_raw, color="yellow"):
-                        # compute reward model score
-                        if self.use_rm and "rm_scores" not in batch.batch.keys():
-                            reward_tensor = self.rm_wg.compute_rm_score(batch)
-                            batch = batch.union(reward_tensor)
+                                working_batch.batch["reward_baselines"] = reward_baseline_tensor
 
-                        if self.config.reward_model.launch_reward_fn_async:
-                            future_reward = compute_reward_async.remote(
-                                data=batch, config=self.config, tokenizer=self.tokenizer
+                                del rm_scores, gen_baseline_batch, gen_baseline_output
+
+                        working_batch = working_batch.repeat(repeat_times=rollout_repeat, interleave=True)
+                        working_batch = working_batch.union(gen_batch_output_out)
+
+                        if "response_mask" not in working_batch.batch.keys():
+                            working_batch.batch["response_mask"] = compute_response_mask(working_batch)
+                        if self.config.trainer.balance_batch:
+                            self._balance_batch(working_batch, metrics=metrics)
+
+                        working_batch.meta_info["global_token_num"] = torch.sum(
+                            working_batch.batch["attention_mask"], dim=-1
+                        ).tolist()
+
+                        with marked_timer("reward", timing_raw, color="yellow"):
+                            if self.use_rm and "rm_scores" not in working_batch.batch.keys():
+                                reward_tensor_out = self.rm_wg.compute_rm_score(working_batch)
+                                working_batch = working_batch.union(reward_tensor_out)
+                            if self.config.reward_model.launch_reward_fn_async:
+                                reward_tensor_out, reward_extra_infos_out = ray.get(
+                                    compute_reward_async.remote(
+                                        data=working_batch, config=self.config, tokenizer=self.tokenizer
+                                    )
+                                )
+                            else:
+                                reward_tensor_out, reward_extra_infos_out = compute_reward(
+                                    working_batch, self.reward_fn
+                                )
+
+                        return working_batch, reward_tensor_out, reward_extra_infos_out
+
+                    batch, reward_tensor, reward_extra_infos_dict = run_rollout(base_gen_batch)
+
+                    sequence_rewards = reward_tensor.sum(dim=-1) if reward_tensor is not None else None
+                    rewards_per_question = (
+                        sequence_rewards.reshape(len(base_batch), rollout_repeat)
+                        if sequence_rewards is not None
+                        else None
+                    )
+                    resolved_mask = torch.any(rewards_per_question > 0, dim=1) if rewards_per_question is not None else None
+
+                    if rewards_per_question is not None and not torch.all(resolved_mask):
+                        requests = []
+                        for idx in range(len(base_batch)):
+                            if not resolved_mask[idx]:
+                                question, solution = self._extract_question_and_solution(base_batch, base_gen_batch, idx)
+                                if question and solution:
+                                    requests.append((idx, question, solution))
+
+                        hint_payloads = self._generate_hints_batch(requests)
+                        if hint_payloads:
+                            metrics["hint/used"] = 1
+                            metrics["hint/num_questions"] = len(hint_payloads)
+                            if "index" in base_batch.non_tensor_batch:
+                                self.reward_tracker.log_hint_payloads(
+                                    base_batch.non_tensor_batch["index"], hint_payloads, self.global_steps, used=False
+                                )
+
+                        for level_key in ["level_1", "level_2", "level_3"]:
+                            target_indices = [
+                                idx
+                                for idx in range(len(base_batch))
+                                if not resolved_mask[idx]
+                                and idx in hint_payloads
+                                and isinstance(hint_payloads[idx].get(level_key, ""), str)
+                                and hint_payloads[idx].get(level_key, "").strip()
+                            ]
+                            if not target_indices:
+                                continue
+
+                            hinted = self._apply_hints_to_gen_batch(
+                                base_gen_batch, base_batch, target_indices, hint_payloads, level_key
                             )
-                        else:
-                            reward_tensor, reward_extra_infos_dict = compute_reward(batch, self.reward_fn)
+                            if hinted is None:
+                                continue
+                            gen_batch_to_use, applied_indices = hinted
+
+                            candidate_batch, candidate_reward_tensor, _ = run_rollout(gen_batch_to_use)
+
+                            self._replace_slices(batch, candidate_batch, applied_indices, rollout_repeat)
+                            for idx in applied_indices:
+                                start = idx * rollout_repeat
+                                end = start + rollout_repeat
+                                reward_tensor[start:end] = candidate_reward_tensor[start:end]
+
+                            if applied_indices:
+                                hint_applied_prompts.update(applied_indices)
+                                hint_level_usage[level_key] += len(applied_indices)
+
+                            if "index" in base_batch.non_tensor_batch:
+                                payload_subset = {idx: hint_payloads[idx] for idx in applied_indices if idx in hint_payloads}
+                                if payload_subset:
+                                    self.reward_tracker.log_hint_payloads(
+                                        base_batch.non_tensor_batch["index"],
+                                        payload_subset,
+                                        self.global_steps,
+                                        used=True,
+                                    )
+
+                            sequence_rewards = reward_tensor.sum(dim=-1)
+                            rewards_per_question = sequence_rewards.reshape(len(base_batch), rollout_repeat)
+                            resolved_mask = torch.any(rewards_per_question > 0, dim=1)
+
+                        reward_extra_infos_dict = {}
+
+                    # Log hint usage counts for this step
+                    metrics["hint/prompts_with_hint"] = len(hint_applied_prompts)
+                    for level_key, count in hint_level_usage.items():
+                        metrics[f"hint/used_{level_key}"] = count
 
                     # recompute old_log_probs
                     with marked_timer("old_log_prob", timing_raw, color="blue"):
@@ -1207,9 +1548,6 @@ class RayHintTrainer:
 
                     with marked_timer("adv", timing_raw, color="brown"):
                         # we combine with rule-based rm
-                        reward_extra_infos_dict: dict[str, list]
-                        if self.config.reward_model.launch_reward_fn_async:
-                            reward_tensor, reward_extra_infos_dict = ray.get(future_reward)
                         batch.batch["token_level_scores"] = reward_tensor
 
                         if reward_extra_infos_dict:
