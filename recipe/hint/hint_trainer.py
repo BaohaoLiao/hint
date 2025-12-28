@@ -761,7 +761,9 @@ class RayHintTrainer:
         tensors = data.batch.clone() if data.batch is not None else None
         non_tensors = {k: deepcopy(v) for k, v in data.non_tensor_batch.items()}
         meta_info = deepcopy(data.meta_info)
-        return DataProto.from_dict(tensors=tensors, non_tensors=non_tensors, meta_info=meta_info)
+        if tensors is not None:
+            return DataProto(batch=tensors, non_tensor_batch=non_tensors, meta_info=meta_info)
+        return DataProto.from_dict(tensors={}, non_tensors=non_tensors, meta_info=meta_info)
 
     def _replace_slices(self, target: DataProto, source: DataProto, indices: list[int], repeat: int):
         """Replace rollout slices for specific questions from source into target."""
