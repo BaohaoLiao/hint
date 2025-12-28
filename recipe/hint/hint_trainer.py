@@ -601,7 +601,7 @@ class RayHintTrainer:
 
     def _generate_hints_batch(
         self, requests: list[tuple[int, str, str]], max_retries: int = 5
-    ) -> dict[int, dict[str, Any]]:
+    ) -> tuple[dict[int, dict[str, Any]], int]:
         """Generate full hint payloads (all levels) for multiple questions in one batch with retries."""
         prepared: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[int]]] = {}
         for idx, question, solution in requests:
@@ -611,7 +611,7 @@ class RayHintTrainer:
             prepared[idx] = prompt_inputs[:4]
 
         if not prepared:
-            return {}
+            return {}, 0
 
         hints: dict[int, dict[str, Any]] = {}
         remaining = list(prepared.keys())
@@ -656,7 +656,8 @@ class RayHintTrainer:
 
             remaining = next_remaining
             attempt += 1
-        return hints
+        failed = len(remaining)
+        return hints, failed
 
     def _build_answer_messages_with_hint(self, question: str, hint_text: str) -> list[dict[str, str]]:
         user_content = (
@@ -1445,6 +1446,7 @@ class RayHintTrainer:
                     resolved_mask = torch.any(rewards_per_question > 0, dim=1) if rewards_per_question is not None else None
 
                     if rewards_per_question is not None and not torch.all(resolved_mask):
+                        metrics["hint/prompts_needing_hint"] = int((~resolved_mask).sum().item())
                         requests = []
                         for idx in range(len(base_batch)):
                             if not resolved_mask[idx]:
@@ -1452,7 +1454,9 @@ class RayHintTrainer:
                                 if question and solution:
                                     requests.append((idx, question, solution))
 
-                        hint_payloads = self._generate_hints_batch(requests)
+                        hint_payloads, hint_failed = self._generate_hints_batch(requests)
+                        metrics["hint/generate_failed"] = hint_failed
+                        metrics["hint/generate_success"] = len(hint_payloads)
                         if hint_payloads:
                             metrics["hint/used"] = 1
                             metrics["hint/num_questions"] = len(hint_payloads)
