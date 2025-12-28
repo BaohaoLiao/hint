@@ -1382,14 +1382,14 @@ class RayHintTrainer:
                             timing_raw.update(gen_batch_output_out.meta_info["timing"])
                             gen_batch_output_out.meta_info.pop("timing", None)
 
-                        working_batch = deepcopy(base_batch)
+                        working_batch = self._clone_dataproto(base_batch)
 
                         if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                             if self.reward_fn is None:
                                 raise ValueError("A reward_fn is required for REMAX advantage estimation.")
 
                             with marked_timer("gen_max", timing_raw, color="purple"):
-                                gen_baseline_batch = deepcopy(gen_batch_for_run)
+                                gen_baseline_batch = self._clone_dataproto(gen_batch_for_run)
                                 gen_baseline_batch.meta_info["do_sample"] = False
                                 if not self.async_rollout_mode:
                                     gen_baseline_output = self.actor_rollout_wg.generate_sequences(gen_baseline_batch)
