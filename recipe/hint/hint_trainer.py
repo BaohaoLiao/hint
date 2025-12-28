@@ -757,6 +757,12 @@ class RayHintTrainer:
             return None
         return updated_gen_batch, applied_indices
 
+    def _clone_dataproto(self, data: DataProto) -> DataProto:
+        tensors = data.batch.clone() if data.batch is not None else None
+        non_tensors = {k: deepcopy(v) for k, v in data.non_tensor_batch.items()}
+        meta_info = deepcopy(data.meta_info)
+        return DataProto.from_dict(tensors=tensors, non_tensors=non_tensors, meta_info=meta_info)
+
     def _replace_slices(self, target: DataProto, source: DataProto, indices: list[int], repeat: int):
         """Replace rollout slices for specific questions from source into target."""
         for idx in indices:
@@ -1353,8 +1359,8 @@ class RayHintTrainer:
 
                 # pass global_steps to trace
                 gen_batch.meta_info["global_steps"] = self.global_steps
-                base_batch = deepcopy(batch)
-                base_gen_batch = deepcopy(gen_batch)
+                base_batch = self._clone_dataproto(batch)
+                base_gen_batch = self._clone_dataproto(gen_batch)
                 is_last_step = self.global_steps >= self.total_training_steps
                 with marked_timer("step", timing_raw):
                     rollout_repeat = self.config.actor_rollout_ref.rollout.n
