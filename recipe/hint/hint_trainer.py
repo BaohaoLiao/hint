@@ -1616,8 +1616,12 @@ class RayHintTrainer:
                                     if torch.any(reward_slice > 0):
                                         global_start = idx * rollout_repeat
                                         global_end = global_start + rollout_repeat
-                                        # cand_batch is subset; local_idx corresponds to position
-                                        self._replace_slices(batch, cand_batch, [idx], rollout_repeat)
+                                        # cand_batch is subset; copy from local slice into global slice
+                                        for key in batch.batch.keys():
+                                            if key in cand_batch.batch:
+                                                batch.batch[key][global_start:global_end] = cand_batch.batch[key][
+                                                    start:end
+                                                ]
                                         reward_tensor[global_start:global_end] = reward_slice
                                         hint_applied_prompts.add(idx)
                                         hint_final_level[idx] = level_key
