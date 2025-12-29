@@ -585,22 +585,19 @@ class RayHintTrainer:
             return None
 
     def _parse_hint_payload(self, hint_text: str) -> Optional[dict[str, Any]]:
-        stripped = hint_text.strip()
+        # Normalize escaped newlines to actual newlines so fence detection works.
+        stripped = hint_text.replace("\\n", "\n").strip()
         # Prefer content inside ```json ... ``` fences when present.
         json_fence = stripped.lower().find("```json")
         if json_fence != -1:
-            after_start = stripped.find("\n", json_fence + 6)
-            if after_start != -1:
-                end = stripped.find("```", after_start)
-                if end != -1:
-                    stripped = stripped[after_start:end].strip()
+            end = stripped.find("```", json_fence + 6)
+            if end != -1:
+                stripped = stripped[json_fence + 6 : end].strip()
         elif stripped.startswith("```") and stripped.count("```") >= 2:
             start = stripped.find("```")
-            after_start = stripped.find("\n", start + 3)
-            if after_start != -1:
-                end = stripped.find("```", after_start)
-                if end != -1:
-                    stripped = stripped[after_start:end].strip()
+            end = stripped.find("```", start + 3)
+            if end != -1:
+                stripped = stripped[start + 3 : end].strip()
         # Heuristic: if there is a JSON object after some intro text, find first brace.
         brace_pos = stripped.find("{")
         if brace_pos > 0:
