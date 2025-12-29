@@ -1617,7 +1617,7 @@ class RayHintTrainer:
                                         global_start = idx * rollout_repeat
                                         global_end = global_start + rollout_repeat
                                         # cand_batch is subset; local_idx corresponds to position
-                                        self._replace_slices(batch, cand_batch[local_idx : local_idx + 1], [idx], 1)
+                                        self._replace_slices(batch, cand_batch, [idx], rollout_repeat)
                                         reward_tensor[global_start:global_end] = reward_slice
                                         hint_applied_prompts.add(idx)
                                         hint_final_level[idx] = level_key
