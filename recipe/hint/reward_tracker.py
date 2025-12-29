@@ -26,6 +26,8 @@ class RewardTracker:
 
         # Store generated hints: index -> list of dicts(step, level, hint, used)
         self.index_to_hint_history: Dict[str, list] = defaultdict(list)
+        # Store raw hint text
+        self.index_to_hint_raw_history: Dict[str, list] = defaultdict(list)
         
         # Track which indices have ever received non-zero reward
         self.indexes_with_nonzero_reward: set = set()
@@ -63,8 +65,8 @@ class RewardTracker:
             # Append to history
             self.index_to_reward_history[index_str].append((global_step, reward_float))
 
-    def log_hint_payloads(self, index_array, hint_payloads: dict, global_step: int, used: bool):
-        """Log generated hints for given indices."""
+    def log_hint_payloads(self, index_array, hint_payloads: dict, global_step: int, used: bool, failed: bool = False):
+        """Log generated hints for given indices, regardless of success."""
         if index_array is None:
             return
         for batch_idx, payload in hint_payloads.items():
@@ -80,8 +82,26 @@ class RewardTracker:
                             "level": level_key,
                             "hint": str(hint_text).strip(),
                             "used": used,
+                            "failed": failed,
                         }
                     )
+
+    def log_hint_raw(self, index_array, raw_hints: dict, global_step: int, used: bool, failed: bool = False):
+        """Log raw hint strings."""
+        if index_array is None:
+            return
+        for batch_idx, raw in raw_hints.items():
+            if batch_idx >= len(index_array):
+                continue
+            index_str = str(index_array[batch_idx])
+            self.index_to_hint_raw_history[index_str].append(
+                {
+                    "step": global_step,
+                    "raw": str(raw),
+                    "used": used,
+                    "failed": failed,
+                }
+            )
     
     def get_zero_reward_stats(self) -> Dict[str, float]:
         """Calculate statistics about data points with zero rewards.
@@ -147,6 +167,9 @@ class RewardTracker:
             "index_to_hint_history": {
                 index: history for index, history in self.index_to_hint_history.items()
             },
+            "index_to_hint_raw_history": {
+                index: history for index, history in self.index_to_hint_raw_history.items()
+            },
         }
         
         with open(checkpoint_path, "w") as f:
@@ -174,6 +197,7 @@ class RewardTracker:
         
         self.index_to_reward_history = defaultdict(list, data["index_to_reward_history"])
         self.index_to_hint_history = defaultdict(list, data.get("index_to_hint_history", {}))
+        self.index_to_hint_raw_history = defaultdict(list, data.get("index_to_hint_raw_history", {}))
 
         # Count indexes that never have non-zero reward
         num_zero_reward = 0

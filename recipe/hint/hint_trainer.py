@@ -19,6 +19,7 @@ This trainer supports model-agonistic model initialization with huggingface
 """
 
 import json
+import json5
 import os
 import uuid
 from collections import defaultdict
@@ -586,7 +587,7 @@ class RayHintTrainer:
 
     def _parse_hint_payload(self, hint_text: str) -> Optional[dict[str, Any]]:
         # Normalize escaped newlines to actual newlines so fence detection works.
-        stripped = hint_text.replace("\\n", "\n").strip()
+        stripped = hint_text #.replace("\\n", "\n").strip()
         # Prefer content inside ```json ... ``` fences when present.
         json_fence = stripped.lower().find("```json")
         if json_fence != -1:
@@ -605,13 +606,13 @@ class RayHintTrainer:
         else:
             stripped_candidate = stripped
         try:
-            return json.loads(stripped_candidate)
+            return json5.loads(stripped_candidate)
         except json.JSONDecodeError:
             start = stripped.find("{")
             end = stripped.rfind("}")
             if start != -1 and end != -1 and end > start:
                 try:
-                    return json.loads(stripped[start : end + 1])
+                    return json5.loads(stripped[start : end + 1])
                 except Exception:
                     return None
             return None
@@ -620,7 +621,7 @@ class RayHintTrainer:
 
     def _generate_hints_batch(
         self, requests: list[tuple[int, str, str]], max_retries: int = 5
-    ) -> tuple[dict[int, dict[str, Any]], int]:
+    ) -> tuple[dict[int, dict[str, Any]], int, int, dict[int, str]]:
         """Generate full hint payloads (all levels) for multiple questions in one batch with retries."""
         prepared: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[int]]] = {}
         for idx, question, solution in requests:
@@ -630,9 +631,10 @@ class RayHintTrainer:
             prepared[idx] = prompt_inputs[:4]
 
         if not prepared:
-            return {}, 0
+            return {}, 0, 0, {}
 
         hints: dict[int, dict[str, Any]] = {}
+        raw_hints: dict[int, str] = {}
         remaining = list(prepared.keys())
         attempt = 0
         while remaining and attempt < max_retries:
@@ -674,6 +676,7 @@ class RayHintTrainer:
             for i, idx in enumerate(remaining):
                 hint_response = hint_output.batch["responses"][i]
                 hint_text = self.tokenizer.decode(hint_response, skip_special_tokens=True).strip()
+                raw_hints[idx] = hint_text
                 hint_payload = self._parse_hint_payload(hint_text)
                 if hint_payload:
                     hints[idx] = hint_payload
@@ -685,7 +688,7 @@ class RayHintTrainer:
             remaining = next_remaining
             attempt += 1
         failed = len(remaining)
-        return hints, failed, attempt
+        return hints, failed, attempt, raw_hints
 
     def _build_answer_messages_with_hint(self, question: str, hint_text: str) -> list[dict[str, str]]:
         user_content = (
@@ -1490,15 +1493,44 @@ class RayHintTrainer:
                                 if question and solution:
                                     requests.append((idx, question, solution))
 
-                        hint_payloads, hint_failed, hint_attempts = self._generate_hints_batch(requests)
+                        hint_payloads, hint_failed, hint_attempts, hint_payloads_raw = self._generate_hints_batch(requests)
                         metrics["hint/generate_failed"] = hint_failed
                         metrics["hint/generate_attempts"] = hint_attempts
                         if hint_payloads:
                             metrics["hint/used"] = 1
                             metrics["hint/num_questions"] = len(hint_payloads)
                             if "index" in base_batch.non_tensor_batch:
+                                self.reward_tracker.log_hint_raw(
+                                    base_batch.non_tensor_batch["index"],
+                                    {idx: raw for idx, raw in hint_payloads_raw.items()},
+                                    self.global_steps,
+                                    used=False,
+                                    failed=False,
+                                )
                                 self.reward_tracker.log_hint_payloads(
-                                    base_batch.non_tensor_batch["index"], hint_payloads, self.global_steps, used=False
+                                    base_batch.non_tensor_batch["index"],
+                                    hint_payloads,
+                                    self.global_steps,
+                                    used=False,
+                                    failed=False,
+                                )
+                        else:
+                            if "index" in base_batch.non_tensor_batch and hint_failed:
+                                # Log failed attempts with an empty payload marker
+                                failed_payloads = {idx: {} for idx in requests}
+                                self.reward_tracker.log_hint_payloads(
+                                    base_batch.non_tensor_batch["index"],
+                                    failed_payloads,
+                                    self.global_steps,
+                                    used=False,
+                                    failed=True,
+                                )
+                                self.reward_tracker.log_hint_raw(
+                                    base_batch.non_tensor_batch["index"],
+                                    {idx: hint_payloads_raw.get(idx, "") for idx in requests},
+                                    self.global_steps,
+                                    used=False,
+                                    failed=True,
                                 )
 
                         for level_key in ["level_1", "level_2", "level_3"]:
@@ -1536,11 +1568,20 @@ class RayHintTrainer:
                             if "index" in base_batch.non_tensor_batch:
                                 payload_subset = {idx: hint_payloads[idx] for idx in applied_indices if idx in hint_payloads}
                                 if payload_subset:
+                                    raw_subset = {idx: hint_payloads_raw.get(idx, "") for idx in applied_indices}
+                                    self.reward_tracker.log_hint_raw(
+                                        base_batch.non_tensor_batch["index"],
+                                        raw_subset,
+                                        self.global_steps,
+                                        used=True,
+                                        failed=False,
+                                    )
                                     self.reward_tracker.log_hint_payloads(
                                         base_batch.non_tensor_batch["index"],
                                         payload_subset,
                                         self.global_steps,
                                         used=True,
+                                        failed=False,
                                     )
 
                             sequence_rewards = reward_tensor.sum(dim=-1)
