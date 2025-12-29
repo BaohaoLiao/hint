@@ -1401,7 +1401,7 @@ class RayHintTrainer:
                     hint_applied_prompts: set[int] = set()
                     hint_final_level: dict[int, str] = {}
 
-                    def run_rollout(gen_batch_for_run: DataProto):
+                    def run_rollout(gen_batch_for_run: DataProto, base_override: Optional[DataProto] = None):
                         gen_batch_output = gen_batch_for_run.repeat(repeat_times=rollout_repeat, interleave=True)
 
                         with marked_timer("gen", timing_raw, color="red"):
@@ -1413,7 +1413,8 @@ class RayHintTrainer:
                             timing_raw.update(gen_batch_output_out.meta_info["timing"])
                             gen_batch_output_out.meta_info.pop("timing", None)
 
-                        working_batch = self._clone_dataproto(base_batch)
+                        base_to_use = base_override if base_override is not None else base_batch
+                        working_batch = self._clone_dataproto(base_to_use)
 
                         if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                             if self.reward_fn is None:
@@ -1534,8 +1535,8 @@ class RayHintTrainer:
                                 )
 
                         # Prepare hinted batches for all levels
-                        hinted_runs = []
-                        run_meta = []
+                        # Prepare hinted batches for all levels
+                        hinted_entries = []
                         for level_key in ["level_1", "level_2", "level_3"]:
                             target_indices = [
                                 idx
@@ -1554,20 +1555,33 @@ class RayHintTrainer:
                             if hinted is None:
                                 continue
                             gen_batch_to_use, applied_indices = hinted
-                            hinted_runs.append(gen_batch_to_use)
-                            run_meta.append((level_key, applied_indices))
+                            hinted_entries.append({"level": level_key, "indices": applied_indices, "gen_batch": gen_batch_to_use})
 
-                        if hinted_runs:
+                        if hinted_entries:
                             # Concatenate all hinted gen batches and run once (with padding to world size)
-                            lengths = [len(run) for run in hinted_runs]
-                            hinted_concat = DataProto.concat(hinted_runs)
+                            lengths = []
+                            hinted_concat_list = []
+                            base_concat_list = []
+                            for entry in hinted_entries:
+                                applied_indices = entry["indices"]
+                                hinted_batch = entry["gen_batch"]
+                                subset_hinted = hinted_batch[applied_indices]
+                                subset_base = base_batch[applied_indices]
+                                hinted_concat_list.append(subset_hinted)
+                                base_concat_list.append(subset_base)
+                                lengths.append(len(subset_hinted))
+                            hinted_concat = DataProto.concat(hinted_concat_list)
+                            base_concat = DataProto.concat(base_concat_list)
                             size_divisor = (
                                 self.actor_rollout_wg.world_size
                                 if not self.async_rollout_mode
                                 else self.config.actor_rollout_ref.rollout.agent.num_workers
                             )
                             hinted_padded, pad_size = pad_dataproto_to_divisor(hinted_concat, size_divisor)
-                            candidate_batch_padded, candidate_reward_tensor_padded, _ = run_rollout(hinted_padded)
+                            base_padded, _ = pad_dataproto_to_divisor(base_concat, size_divisor)
+                            candidate_batch_padded, candidate_reward_tensor_padded, _ = run_rollout(
+                                hinted_padded, base_override=base_padded
+                            )
                             candidate_batch_concat = unpad_dataproto(candidate_batch_padded, pad_size=pad_size)
                             total_len = sum(lengths) * rollout_repeat
                             candidate_reward_tensor_concat = (
@@ -1588,19 +1602,22 @@ class RayHintTrainer:
                                 reward_splits.append(candidate_reward_tensor_concat[r_start:r_end])
                                 start = end
 
-                            for (level_key, applied_indices), cand_batch, reward_split in zip(
-                                run_meta, split_batches, reward_splits, strict=True
+                            for entry, cand_batch, reward_split in zip(
+                                hinted_entries, split_batches, reward_splits, strict=True
                             ):
-                                for idx in applied_indices:
+                                level_key = entry["level"]
+                                applied_indices = entry["indices"]
+                                for local_idx, idx in enumerate(applied_indices):
                                     if resolved_mask[idx]:
                                         continue
-                                    start = applied_indices.index(idx) * rollout_repeat
+                                    start = local_idx * rollout_repeat
                                     end = start + rollout_repeat
                                     reward_slice = reward_split[start:end]
                                     if torch.any(reward_slice > 0):
                                         global_start = idx * rollout_repeat
                                         global_end = global_start + rollout_repeat
-                                        self._replace_slices(batch, cand_batch, [idx], rollout_repeat)
+                                        # cand_batch is subset; local_idx corresponds to position
+                                        self._replace_slices(batch, cand_batch[local_idx : local_idx + 1], [idx], 1)
                                         reward_tensor[global_start:global_end] = reward_slice
                                         hint_applied_prompts.add(idx)
                                         hint_final_level[idx] = level_key
