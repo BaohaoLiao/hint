@@ -620,7 +620,7 @@ class RayHintTrainer:
             return None
 
     def _generate_hints_batch(
-        self, requests: list[tuple[int, str, str]], max_retries: int = 5
+        self, requests: list[tuple[int, str, str]], max_retries: int = 3
     ) -> tuple[dict[int, dict[str, Any]], int, int, dict[int, str]]:
         """Generate full hint payloads (all levels) for multiple questions in one batch with retries."""
         prepared: dict[int, tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[int]]] = {}
