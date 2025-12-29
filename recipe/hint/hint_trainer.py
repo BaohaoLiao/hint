@@ -636,10 +636,17 @@ class RayHintTrainer:
             hint_batch.meta_info["validate"] = True
             hint_batch.meta_info["do_sample"] = True
 
+            size_divisor = (
+                self.actor_rollout_wg.world_size
+                if not self.async_rollout_mode
+                else self.config.actor_rollout_ref.rollout.agent.num_workers
+            )
+            hint_batch_padded, pad_size = pad_dataproto_to_divisor(hint_batch, size_divisor)
             if not self.async_rollout_mode:
-                hint_output = self.actor_rollout_wg.generate_sequences(hint_batch)
+                hint_output_padded = self.actor_rollout_wg.generate_sequences(hint_batch_padded)
             else:
-                hint_output = self.async_rollout_manager.generate_sequences(hint_batch)
+                hint_output_padded = self.async_rollout_manager.generate_sequences(hint_batch_padded)
+            hint_output = unpad_dataproto(hint_output_padded, pad_size=pad_size)
 
             if "responses" not in hint_output.batch.keys():
                 break
