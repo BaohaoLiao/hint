@@ -587,7 +587,7 @@ class RayHintTrainer:
 
     def _parse_hint_payload(self, hint_text: str) -> Optional[dict[str, Any]]:
         # Normalize escaped newlines to actual newlines so fence detection works.
-        stripped = hint_text #.replace("\\n", "\n").strip()
+        stripped = hint_text.replace("\\n", "\n").strip()
         # Prefer content inside ```json ... ``` fences when present.
         json_fence = stripped.lower().find("```json")
         if json_fence != -1:
@@ -1560,6 +1560,7 @@ class RayHintTrainer:
                         if hinted_entries:
                             # Concatenate all hinted gen batches and run once (with padding to world size)
                             lengths = []
+                            lengths_repeat = []
                             hinted_concat_list = []
                             base_concat_list = []
                             for entry in hinted_entries:
@@ -1570,6 +1571,7 @@ class RayHintTrainer:
                                 hinted_concat_list.append(subset_hinted)
                                 base_concat_list.append(subset_base)
                                 lengths.append(len(subset_hinted))
+                                lengths_repeat.append(len(subset_hinted) * rollout_repeat)
                             hinted_concat = DataProto.concat(hinted_concat_list)
                             base_concat = DataProto.concat(base_concat_list)
                             size_divisor = (
@@ -1582,25 +1584,30 @@ class RayHintTrainer:
                             candidate_batch_padded, candidate_reward_tensor_padded, _ = run_rollout(
                                 hinted_padded, base_override=base_padded
                             )
-                            candidate_batch_concat = unpad_dataproto(candidate_batch_padded, pad_size=pad_size)
+
+                            pad_total = pad_size * rollout_repeat
+                            candidate_batch_concat = unpad_dataproto(
+                                candidate_batch_padded, pad_size=pad_total
+                            )
                             total_len = sum(lengths) * rollout_repeat
                             candidate_reward_tensor_concat = (
-                                candidate_reward_tensor_padded[:total_len]
-                                if pad_size > 0
-                                else candidate_reward_tensor_padded
+                                candidate_reward_tensor_padded[:-pad_total] if pad_total > 0 else candidate_reward_tensor_padded
                             )
+                            if candidate_reward_tensor_concat.shape[0] > total_len:
+                                candidate_reward_tensor_concat = candidate_reward_tensor_concat[:total_len]
 
                             # Split back per hinted run using original lengths
                             split_batches = []
                             reward_splits = []
-                            start = 0
-                            for run_len in lengths:
-                                end = start + run_len
-                                split_batches.append(candidate_batch_concat[start:end])
-                                r_start = start * rollout_repeat
-                                r_end = r_start + run_len * rollout_repeat
-                                reward_splits.append(candidate_reward_tensor_concat[r_start:r_end])
-                                start = end
+                            start_b = 0
+                            start_r = 0
+                            for run_len, run_len_rep in zip(lengths, lengths_repeat, strict=True):
+                                end_b = start_b + run_len_rep
+                                end_r = start_r + run_len_rep
+                                split_batches.append(candidate_batch_concat[start_b:end_b])
+                                reward_splits.append(candidate_reward_tensor_concat[start_r:end_r])
+                                start_b = end_b
+                                start_r = end_r
 
                             for entry, cand_batch, reward_split in zip(
                                 hinted_entries, split_batches, reward_splits, strict=True
@@ -1616,7 +1623,7 @@ class RayHintTrainer:
                                     if torch.any(reward_slice > 0):
                                         global_start = idx * rollout_repeat
                                         global_end = global_start + rollout_repeat
-                                        # cand_batch is subset; copy from local slice into global slice
+                                        # cand_batch length already includes rollout_repeat
                                         for key in batch.batch.keys():
                                             if key in cand_batch.batch:
                                                 batch.batch[key][global_start:global_end] = cand_batch.batch[key][
