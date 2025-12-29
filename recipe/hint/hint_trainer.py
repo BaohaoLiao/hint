@@ -585,14 +585,18 @@ class RayHintTrainer:
             return None
 
     def _parse_hint_payload(self, hint_text: str) -> Optional[dict[str, Any]]:
+        # Strip common code fences (```json ... ``` or ``` ... ```).
+        stripped = hint_text.strip()
+        if stripped.startswith("```"):
+            stripped = stripped.lstrip("`").lstrip("json").lstrip().rstrip("`").strip()
         try:
-            return json.loads(hint_text)
+            return json.loads(stripped)
         except json.JSONDecodeError:
-            start = hint_text.find("{")
-            end = hint_text.rfind("}")
+            start = stripped.find("{")
+            end = stripped.rfind("}")
             if start != -1 and end != -1 and end > start:
                 try:
-                    return json.loads(hint_text[start : end + 1])
+                    return json.loads(stripped[start : end + 1])
                 except Exception:
                     return None
             return None
@@ -664,7 +668,7 @@ class RayHintTrainer:
             remaining = next_remaining
             attempt += 1
         failed = len(remaining)
-        return hints, failed
+        return hints, failed, attempt
 
     def _build_answer_messages_with_hint(self, question: str, hint_text: str) -> list[dict[str, str]]:
         user_content = (
@@ -1469,8 +1473,9 @@ class RayHintTrainer:
                                 if question and solution:
                                     requests.append((idx, question, solution))
 
-                        hint_payloads, hint_failed = self._generate_hints_batch(requests)
+                        hint_payloads, hint_failed, hint_attempts = self._generate_hints_batch(requests)
                         metrics["hint/generate_failed"] = hint_failed
+                        metrics["hint/generate_attempts"] = hint_attempts
                         if hint_payloads:
                             metrics["hint/used"] = 1
                             metrics["hint/num_questions"] = len(hint_payloads)
