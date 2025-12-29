@@ -681,7 +681,7 @@ class RayHintTrainer:
                 if hint_payload:
                     hints[idx] = hint_payload
                 else:
-                    preview = hint_text[:200].replace("\n", "\\n")
+                    preview = [hint_text]
                     print(f"[hint_parse_failed] idx={idx} attempt={attempt} text_preview={preview}")
                     next_remaining.append(idx)
 
