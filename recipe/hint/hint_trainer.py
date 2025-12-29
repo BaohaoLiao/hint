@@ -1375,7 +1375,7 @@ class RayHintTrainer:
                     rollout_repeat = self.config.actor_rollout_ref.rollout.n
 
                     hint_applied_prompts: set[int] = set()
-                    hint_level_usage = {"level_1": 0, "level_2": 0, "level_3": 0}
+                    hint_final_level: dict[int, str] = {}
 
                     def run_rollout(gen_batch_for_run: DataProto):
                         gen_batch_output = gen_batch_for_run.repeat(repeat_times=rollout_repeat, interleave=True)
@@ -1471,7 +1471,6 @@ class RayHintTrainer:
 
                         hint_payloads, hint_failed = self._generate_hints_batch(requests)
                         metrics["hint/generate_failed"] = hint_failed
-                        metrics["hint/generate_success"] = len(hint_payloads)
                         if hint_payloads:
                             metrics["hint/used"] = 1
                             metrics["hint/num_questions"] = len(hint_payloads)
@@ -1509,7 +1508,8 @@ class RayHintTrainer:
 
                             if applied_indices:
                                 hint_applied_prompts.update(applied_indices)
-                                hint_level_usage[level_key] += len(applied_indices)
+                                for idx in applied_indices:
+                                    hint_final_level[idx] = level_key
 
                             if "index" in base_batch.non_tensor_batch:
                                 payload_subset = {idx: hint_payloads[idx] for idx in applied_indices if idx in hint_payloads}
@@ -1529,8 +1529,13 @@ class RayHintTrainer:
 
                     # Log hint usage counts for this step
                     metrics["hint/prompts_with_hint"] = len(hint_applied_prompts)
-                    for level_key, count in hint_level_usage.items():
+                    level_counts = {"level_1": 0, "level_2": 0, "level_3": 0}
+                    for level in hint_final_level.values():
+                        if level in level_counts:
+                            level_counts[level] += 1
+                    for level_key, count in level_counts.items():
                         metrics[f"hint/used_{level_key}"] = count
+                    metrics["hint/generate_success"] = len(hint_final_level)
 
                     # recompute old_log_probs
                     with marked_timer("old_log_prob", timing_raw, color="blue"):
