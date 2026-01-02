@@ -1398,8 +1398,20 @@ class RayHintTrainer:
                 with marked_timer("step", timing_raw):
                     rollout_repeat = self.config.actor_rollout_ref.rollout.n
 
+                    # Determine which hint level to apply (0 = no hint)
+                    try:
+                        hint_level = int(self.config.trainer.get("hint_level", 0))
+                    except Exception:
+                        hint_level = 0
+                    level_key_map = {1: "level_1", 2: "level_2", 3: "level_3"}
+                    hint_level_key = level_key_map.get(hint_level)
+
                     hint_applied_prompts: set[int] = set()
-                    hint_final_level: dict[int, str] = {}
+                    applied_indices: list[int] = []
+                    hint_payloads: dict[int, dict[str, Any]] = {}
+                    hint_payloads_raw: dict[int, str] = {}
+                    hint_failed = 0
+                    hint_attempts = 0
 
                     def run_rollout(gen_batch_for_run: DataProto):
                         gen_batch_output = gen_batch_for_run.repeat(repeat_times=rollout_repeat, interleave=True)
@@ -1474,32 +1486,21 @@ class RayHintTrainer:
 
                         return working_batch, reward_tensor_out, reward_extra_infos_out
 
-                    batch, reward_tensor, reward_extra_infos_dict = run_rollout(base_gen_batch)
+                    # Generate hints before rollout (single pass); fall back to original prompts on failure
+                    requests = []
+                    for idx in range(len(base_batch)):
+                        question, solution = self._extract_question_and_solution(base_batch, base_gen_batch, idx)
+                        if question and solution:
+                            requests.append((idx, question, solution))
 
-                    sequence_rewards = reward_tensor.sum(dim=-1) if reward_tensor is not None else None
-                    rewards_per_question = (
-                        sequence_rewards.reshape(len(base_batch), rollout_repeat)
-                        if sequence_rewards is not None
-                        else None
-                    )
-                    resolved_mask = torch.any(rewards_per_question > 0, dim=1) if rewards_per_question is not None else None
-
-                    if rewards_per_question is not None and not torch.all(resolved_mask):
-                        metrics["hint/prompts_needing_hint"] = int((~resolved_mask).sum().item())
-                        requests = []
-                        for idx in range(len(base_batch)):
-                            if not resolved_mask[idx]:
-                                question, solution = self._extract_question_and_solution(base_batch, base_gen_batch, idx)
-                                if question and solution:
-                                    requests.append((idx, question, solution))
-
+                    if requests:
                         hint_payloads, hint_failed, hint_attempts, hint_payloads_raw = self._generate_hints_batch(requests)
                         metrics["hint/generate_failed"] = hint_failed
                         metrics["hint/generate_attempts"] = hint_attempts
-                        if hint_payloads:
-                            metrics["hint/used"] = 1
-                            metrics["hint/num_questions"] = len(hint_payloads)
-                            if "index" in base_batch.non_tensor_batch:
+                        metrics["hint/num_questions"] = len(hint_payloads)
+
+                        if "index" in base_batch.non_tensor_batch:
+                            if hint_payloads:
                                 self.reward_tracker.log_hint_raw(
                                     base_batch.non_tensor_batch["index"],
                                     {idx: raw for idx, raw in hint_payloads_raw.items()},
@@ -1514,10 +1515,10 @@ class RayHintTrainer:
                                     used=False,
                                     failed=False,
                                 )
-                        else:
-                            if "index" in base_batch.non_tensor_batch and hint_failed:
-                                # Log failed attempts with an empty payload marker
-                                failed_payloads = {idx: {} for idx in requests}
+
+                            failed_indices = [idx for idx, _, _ in requests if idx not in hint_payloads]
+                            if failed_indices:
+                                failed_payloads = {idx: {} for idx in failed_indices}
                                 self.reward_tracker.log_hint_payloads(
                                     base_batch.non_tensor_batch["index"],
                                     failed_payloads,
@@ -1527,48 +1528,34 @@ class RayHintTrainer:
                                 )
                                 self.reward_tracker.log_hint_raw(
                                     base_batch.non_tensor_batch["index"],
-                                    {idx: hint_payloads_raw.get(idx, "") for idx in requests},
+                                    {idx: hint_payloads_raw.get(idx, "") for idx in failed_indices},
                                     self.global_steps,
                                     used=False,
                                     failed=True,
                                 )
+                    else:
+                        metrics["hint/generate_failed"] = 0
+                        metrics["hint/generate_attempts"] = 0
+                        metrics["hint/num_questions"] = 0
 
-                        for level_key in ["level_1", "level_2", "level_3"]:
-                            target_indices = [
-                                idx
-                                for idx in range(len(base_batch))
-                                if not resolved_mask[idx]
-                                and idx in hint_payloads
-                                and isinstance(hint_payloads[idx].get(level_key, ""), str)
-                                and hint_payloads[idx].get(level_key, "").strip()
-                            ]
-                            if not target_indices:
-                                continue
-
-                            hinted = self._apply_hints_to_gen_batch(
-                                base_gen_batch, base_batch, target_indices, hint_payloads, level_key
-                            )
-                            if hinted is None:
-                                continue
+                    gen_batch_to_use = base_gen_batch
+                    if hint_level_key and hint_payloads:
+                        target_indices = [
+                            idx
+                            for idx, payload in hint_payloads.items()
+                            if isinstance(payload.get(hint_level_key, ""), str) and payload.get(hint_level_key, "").strip()
+                        ]
+                        hinted = self._apply_hints_to_gen_batch(
+                            base_gen_batch, base_batch, target_indices, hint_payloads, hint_level_key
+                        )
+                        if hinted is not None:
                             gen_batch_to_use, applied_indices = hinted
+                            hint_applied_prompts.update(applied_indices)
 
-                            candidate_batch, candidate_reward_tensor, _ = run_rollout(gen_batch_to_use)
-
-                            self._replace_slices(batch, candidate_batch, applied_indices, rollout_repeat)
-                            for idx in applied_indices:
-                                start = idx * rollout_repeat
-                                end = start + rollout_repeat
-                                reward_tensor[start:end] = candidate_reward_tensor[start:end]
-
-                            if applied_indices:
-                                hint_applied_prompts.update(applied_indices)
-                                for idx in applied_indices:
-                                    hint_final_level[idx] = level_key
-
-                            if "index" in base_batch.non_tensor_batch:
+                            if "index" in base_batch.non_tensor_batch and applied_indices:
                                 payload_subset = {idx: hint_payloads[idx] for idx in applied_indices if idx in hint_payloads}
+                                raw_subset = {idx: hint_payloads_raw.get(idx, "") for idx in applied_indices}
                                 if payload_subset:
-                                    raw_subset = {idx: hint_payloads_raw.get(idx, "") for idx in applied_indices}
                                     self.reward_tracker.log_hint_raw(
                                         base_batch.non_tensor_batch["index"],
                                         raw_subset,
@@ -1584,21 +1571,18 @@ class RayHintTrainer:
                                         failed=False,
                                     )
 
-                            sequence_rewards = reward_tensor.sum(dim=-1)
-                            rewards_per_question = sequence_rewards.reshape(len(base_batch), rollout_repeat)
-                            resolved_mask = torch.any(rewards_per_question > 0, dim=1)
-
-                        reward_extra_infos_dict = {}
+                    batch, reward_tensor, reward_extra_infos_dict = run_rollout(gen_batch_to_use)
 
                     # Log hint usage counts for this step
                     metrics["hint/prompts_with_hint"] = len(hint_applied_prompts)
+                    metrics["hint/requested_level"] = hint_level
                     level_counts = {"level_1": 0, "level_2": 0, "level_3": 0}
-                    for level in hint_final_level.values():
-                        if level in level_counts:
-                            level_counts[level] += 1
+                    if hint_level_key:
+                        level_counts[hint_level_key] = len(hint_applied_prompts)
                     for level_key, count in level_counts.items():
                         metrics[f"hint/used_{level_key}"] = count
-                    metrics["hint/generate_success"] = len(hint_final_level)
+                    metrics["hint/generate_success"] = len(hint_applied_prompts)
+                    metrics["hint/used"] = int(len(hint_applied_prompts) > 0)
 
                     # recompute old_log_probs
                     with marked_timer("old_log_prob", timing_raw, color="blue"):

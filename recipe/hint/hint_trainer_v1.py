@@ -154,7 +154,7 @@ class ResourcePoolManager:
             raise ValueError(
                 f"Total available GPUs {total_available_gpus} is less than total desired GPUs {total_required_gpus}"
             )
-        
+
 
 def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty="kl"):
     """Apply KL penalty to the token-level rewards.
@@ -584,10 +584,10 @@ class RayHintTrainer:
         except Exception as e:
             print(f"Failed to build prompt inputs: {e}")
             return None
-        
+
     def _parse_hint_payload(self, hint_text: str) -> Optional[dict[str, Any]]:
         # Normalize escaped newlines to actual newlines so fence detection works.
-        stripped = hint_text #.replace("\\n", "\n").strip()
+        stripped = hint_text.replace("\\n", "\n").strip()
         # Prefer content inside ```json ... ``` fences when present.
         json_fence = stripped.lower().find("```json")
         if json_fence != -1:
@@ -618,7 +618,7 @@ class RayHintTrainer:
             return None
         except Exception:
             return None
-        
+
     def _generate_hints_batch(
         self, requests: list[tuple[int, str, str]], max_retries: int = 3
     ) -> tuple[dict[int, dict[str, Any]], int, int, dict[int, str]]:
@@ -689,7 +689,7 @@ class RayHintTrainer:
             attempt += 1
         failed = len(remaining)
         return hints, failed, attempt, raw_hints
-    
+
     def _build_answer_messages_with_hint(self, question: str, hint_text: str) -> list[dict[str, str]]:
         user_content = (
             f"Question:\n{question}\n\nHere is a hint to help you:\n{hint_text}"
@@ -737,7 +737,7 @@ class RayHintTrainer:
                 question = None
 
         return question, solution
-    
+
     def _apply_hints_to_gen_batch(
         self,
         gen_batch: DataProto,
@@ -787,7 +787,7 @@ class RayHintTrainer:
         if not applied_indices:
             return None
         return updated_gen_batch, applied_indices
-    
+
     def _clone_dataproto(self, data: DataProto) -> DataProto:
         tensors = data.batch.clone() if data.batch is not None else None
         non_tensors = {k: deepcopy(v) for k, v in data.non_tensor_batch.items()}
@@ -824,7 +824,7 @@ class RayHintTrainer:
             gen_batch.non_tensor_batch.update(batch.non_tensor_batch)
 
         return gen_batch
-    
+
     def _validate(self):
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
@@ -965,7 +965,7 @@ class RayHintTrainer:
             metric_dict["val-aux/num_turns/mean"] = sample_turns.mean()
 
         return metric_dict
-    
+
     def init_workers(self):
         """Initialize distributed training workers using Ray backend.
 
@@ -1316,7 +1316,7 @@ class RayHintTrainer:
 
         # Return unchanged batch and empty metrics if IS is disabled
         return batch, {}
-    
+
     def fit(self):
         """
         The training loop of PPO.
@@ -1401,7 +1401,7 @@ class RayHintTrainer:
                     hint_applied_prompts: set[int] = set()
                     hint_final_level: dict[int, str] = {}
 
-                    def run_rollout(gen_batch_for_run: DataProto):
+                    def run_rollout(gen_batch_for_run: DataProto, base_override: Optional[DataProto] = None):
                         gen_batch_output = gen_batch_for_run.repeat(repeat_times=rollout_repeat, interleave=True)
 
                         with marked_timer("gen", timing_raw, color="red"):
@@ -1413,7 +1413,8 @@ class RayHintTrainer:
                             timing_raw.update(gen_batch_output_out.meta_info["timing"])
                             gen_batch_output_out.meta_info.pop("timing", None)
 
-                        working_batch = self._clone_dataproto(base_batch)
+                        base_to_use = base_override if base_override is not None else base_batch
+                        working_batch = self._clone_dataproto(base_to_use)
 
                         if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                             if self.reward_fn is None:
@@ -1533,6 +1534,9 @@ class RayHintTrainer:
                                     failed=True,
                                 )
 
+                        # Prepare hinted batches for all levels
+                        # Prepare hinted batches for all levels
+                        hinted_entries = []
                         for level_key in ["level_1", "level_2", "level_3"]:
                             target_indices = [
                                 idx
@@ -1551,39 +1555,101 @@ class RayHintTrainer:
                             if hinted is None:
                                 continue
                             gen_batch_to_use, applied_indices = hinted
+                            hinted_entries.append({"level": level_key, "indices": applied_indices, "gen_batch": gen_batch_to_use})
 
-                            candidate_batch, candidate_reward_tensor, _ = run_rollout(gen_batch_to_use)
+                        if hinted_entries:
+                            # Concatenate all hinted gen batches and run once (with padding to world size)
+                            lengths = []
+                            lengths_repeat = []
+                            hinted_concat_list = []
+                            base_concat_list = []
+                            for entry in hinted_entries:
+                                applied_indices = entry["indices"]
+                                hinted_batch = entry["gen_batch"]
+                                subset_hinted = hinted_batch[applied_indices]
+                                subset_base = base_batch[applied_indices]
+                                hinted_concat_list.append(subset_hinted)
+                                base_concat_list.append(subset_base)
+                                lengths.append(len(subset_hinted))
+                                lengths_repeat.append(len(subset_hinted) * rollout_repeat)
+                            hinted_concat = DataProto.concat(hinted_concat_list)
+                            base_concat = DataProto.concat(base_concat_list)
+                            size_divisor = (
+                                self.actor_rollout_wg.world_size
+                                if not self.async_rollout_mode
+                                else self.config.actor_rollout_ref.rollout.agent.num_workers
+                            )
+                            hinted_padded, pad_size = pad_dataproto_to_divisor(hinted_concat, size_divisor)
+                            base_padded, _ = pad_dataproto_to_divisor(base_concat, size_divisor)
+                            candidate_batch_padded, candidate_reward_tensor_padded, _ = run_rollout(
+                                hinted_padded, base_override=base_padded
+                            )
 
-                            self._replace_slices(batch, candidate_batch, applied_indices, rollout_repeat)
-                            for idx in applied_indices:
-                                start = idx * rollout_repeat
-                                end = start + rollout_repeat
-                                reward_tensor[start:end] = candidate_reward_tensor[start:end]
+                            pad_total = pad_size * rollout_repeat
+                            candidate_batch_concat = unpad_dataproto(
+                                candidate_batch_padded, pad_size=pad_total
+                            )
+                            total_len = sum(lengths) * rollout_repeat
+                            candidate_reward_tensor_concat = (
+                                candidate_reward_tensor_padded[:-pad_total] if pad_total > 0 else candidate_reward_tensor_padded
+                            )
+                            if candidate_reward_tensor_concat.shape[0] > total_len:
+                                candidate_reward_tensor_concat = candidate_reward_tensor_concat[:total_len]
 
-                            if applied_indices:
-                                hint_applied_prompts.update(applied_indices)
-                                for idx in applied_indices:
-                                    hint_final_level[idx] = level_key
+                            # Split back per hinted run using original lengths
+                            split_batches = []
+                            reward_splits = []
+                            start_b = 0
+                            start_r = 0
+                            for run_len, run_len_rep in zip(lengths, lengths_repeat, strict=True):
+                                end_b = start_b + run_len_rep
+                                end_r = start_r + run_len_rep
+                                split_batches.append(candidate_batch_concat[start_b:end_b])
+                                reward_splits.append(candidate_reward_tensor_concat[start_r:end_r])
+                                start_b = end_b
+                                start_r = end_r
 
-                            if "index" in base_batch.non_tensor_batch:
-                                payload_subset = {idx: hint_payloads[idx] for idx in applied_indices if idx in hint_payloads}
-                                if payload_subset:
-                                    raw_subset = {idx: hint_payloads_raw.get(idx, "") for idx in applied_indices}
-                                    self.reward_tracker.log_hint_raw(
-                                        base_batch.non_tensor_batch["index"],
-                                        raw_subset,
-                                        self.global_steps,
-                                        used=True,
-                                        failed=False,
-                                    )
-                                    self.reward_tracker.log_hint_payloads(
-                                        base_batch.non_tensor_batch["index"],
-                                        payload_subset,
-                                        self.global_steps,
-                                        used=True,
-                                        failed=False,
-                                    )
-
+                            for entry, cand_batch, reward_split in zip(
+                                hinted_entries, split_batches, reward_splits, strict=True
+                            ):
+                                level_key = entry["level"]
+                                applied_indices = entry["indices"]
+                                for local_idx, idx in enumerate(applied_indices):
+                                    if resolved_mask[idx]:
+                                        continue
+                                    start = local_idx * rollout_repeat
+                                    end = start + rollout_repeat
+                                    reward_slice = reward_split[start:end]
+                                    if torch.any(reward_slice > 0):
+                                        global_start = idx * rollout_repeat
+                                        global_end = global_start + rollout_repeat
+                                        # cand_batch length already includes rollout_repeat
+                                        for key in batch.batch.keys():
+                                            if key in cand_batch.batch:
+                                                batch.batch[key][global_start:global_end] = cand_batch.batch[key][
+                                                    start:end
+                                                ]
+                                        reward_tensor[global_start:global_end] = reward_slice
+                                        hint_applied_prompts.add(idx)
+                                        hint_final_level[idx] = level_key
+                                        if "index" in base_batch.non_tensor_batch:
+                                            raw_subset = {idx: hint_payloads_raw.get(idx, "")}
+                                            payload_subset = {idx: hint_payloads[idx]}
+                                            self.reward_tracker.log_hint_raw(
+                                                base_batch.non_tensor_batch["index"],
+                                                raw_subset,
+                                                self.global_steps,
+                                                used=True,
+                                                failed=False,
+                                            )
+                                            self.reward_tracker.log_hint_payloads(
+                                                base_batch.non_tensor_batch["index"],
+                                                payload_subset,
+                                                self.global_steps,
+                                                used=True,
+                                                failed=False,
+                                            )
+                                        resolved_mask[idx] = True
                             sequence_rewards = reward_tensor.sum(dim=-1)
                             rewards_per_question = sequence_rewards.reshape(len(base_batch), rollout_repeat)
                             resolved_mask = torch.any(rewards_per_question > 0, dim=1)
