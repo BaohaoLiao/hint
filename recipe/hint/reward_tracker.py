@@ -28,6 +28,15 @@ class RewardTracker:
         self.index_to_hint_history: Dict[str, list] = defaultdict(list)
         # Store raw hint text
         self.index_to_hint_raw_history: Dict[str, list] = defaultdict(list)
+
+        # Store the next-iteration hint level for each index
+        self.index_to_hint_level: Dict[str, str] = {}
+        # Store accuracy per index per level: index -> list of dicts(step, level, accuracy)
+        self.index_to_hint_accuracy_history: Dict[str, list] = defaultdict(list)
+        # Store last-iteration accuracy for each index
+        self.index_to_last_hint_accuracy: Dict[str, float] = {}
+        # Store last successful hint payloads for fallback: index -> {"level_1": ..., "level_2": ..., "level_3": ...}
+        self.index_to_last_hint_payloads: Dict[str, dict] = {}
         
         # Track which indices have ever received non-zero reward
         self.indexes_with_nonzero_reward: set = set()
@@ -102,6 +111,48 @@ class RewardTracker:
                     "failed": failed,
                 }
             )
+
+    def log_hint_accuracy(self, index_array, levels_by_batch_idx: dict, accuracies, global_step: int):
+        """Log per-prompt accuracy for the hint setting used in the current iteration."""
+        if index_array is None:
+            return
+        for batch_idx, acc in enumerate(accuracies):
+            if batch_idx >= len(index_array):
+                continue
+            index_str = str(index_array[batch_idx])
+            level = levels_by_batch_idx.get(batch_idx, "no_hint")
+            self.index_to_hint_accuracy_history[index_str].append(
+                {
+                    "step": global_step,
+                    "level": level,
+                    "accuracy": float(acc),
+                }
+            )
+
+    def get_hint_level(self, index_str: str, default: str = "no_hint") -> str:
+        """Get the last-iteration hint level for a prompt index."""
+        return self.index_to_hint_level.get(index_str, default)
+
+    def set_hint_level(self, index_str: str, level: str):
+        """Set the last-iteration hint level for a prompt index."""
+        self.index_to_hint_level[index_str] = level
+
+    def get_last_hint_accuracy(self, index_str: str):
+        """Get the last-iteration accuracy for a prompt index."""
+        return self.index_to_last_hint_accuracy.get(index_str)
+
+    def set_last_hint_accuracy(self, index_str: str, accuracy: float):
+        """Set the last-iteration accuracy for a prompt index."""
+        self.index_to_last_hint_accuracy[index_str] = float(accuracy)
+
+    def get_last_hint_payload(self, index_str: str):
+        """Get the last successful hint payload for a prompt index."""
+        return self.index_to_last_hint_payloads.get(index_str)
+
+    def set_last_hint_payload(self, index_str: str, payload: dict):
+        """Set the last successful hint payload for a prompt index."""
+        if payload:
+            self.index_to_last_hint_payloads[index_str] = payload
     
     def get_zero_reward_stats(self) -> Dict[str, float]:
         """Calculate statistics about data points with zero rewards.
@@ -170,6 +221,12 @@ class RewardTracker:
             "index_to_hint_raw_history": {
                 index: history for index, history in self.index_to_hint_raw_history.items()
             },
+            "index_to_hint_level": self.index_to_hint_level,
+            "index_to_last_hint_accuracy": self.index_to_last_hint_accuracy,
+            "index_to_last_hint_payloads": self.index_to_last_hint_payloads,
+            "index_to_hint_accuracy_history": {
+                index: history for index, history in self.index_to_hint_accuracy_history.items()
+            },
         }
         
         with open(checkpoint_path, "w") as f:
@@ -198,6 +255,10 @@ class RewardTracker:
         self.index_to_reward_history = defaultdict(list, data["index_to_reward_history"])
         self.index_to_hint_history = defaultdict(list, data.get("index_to_hint_history", {}))
         self.index_to_hint_raw_history = defaultdict(list, data.get("index_to_hint_raw_history", {}))
+        self.index_to_hint_level = data.get("index_to_hint_level", {})
+        self.index_to_last_hint_accuracy = data.get("index_to_last_hint_accuracy", {})
+        self.index_to_last_hint_payloads = data.get("index_to_last_hint_payloads", {})
+        self.index_to_hint_accuracy_history = defaultdict(list, data.get("index_to_hint_accuracy_history", {}))
 
         # Count indexes that never have non-zero reward
         num_zero_reward = 0
