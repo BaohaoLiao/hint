@@ -1472,7 +1472,10 @@ class RayHintTrainer:
                         return working_batch, reward_tensor_out, reward_extra_infos_out
 
                     index_array = base_batch.non_tensor_batch.get("index")
-                    threshold = float(self.config.trainer.get("hint_accuracy_threshold", 0.5))
+                    min_threshold = self.config.trainer.get("hint_accuracy_min_threshold", 0)
+                    max_threshold = self.config.trainer.get("hint_accuracy_max_threshold", 0.25)
+                    if min_threshold > max_threshold:
+                        min_threshold, max_threshold = max_threshold, min_threshold
                     current_level_by_batch_idx: dict[int, str] = {}
                     level_to_indices = {"level_1": [], "level_2": [], "level_3": []}
                     for idx in range(len(base_batch)):
@@ -1488,7 +1491,7 @@ class RayHintTrainer:
                             level = "no_hint"
                         else:
                             level = prev_level
-                            if prev_acc == 0.0:
+                            if prev_acc <= min_threshold:
                                 if prev_level == "no_hint":
                                     level = "level_1"
                                 elif prev_level == "level_1":
@@ -1499,7 +1502,7 @@ class RayHintTrainer:
                                     level = "level_3"
                                 else:
                                     level = "no_hint"
-                            elif prev_acc > threshold:
+                            elif prev_acc > max_threshold:
                                 if prev_level == "level_3":
                                     level = "level_2"
                                 elif prev_level == "level_2":
@@ -1672,7 +1675,8 @@ class RayHintTrainer:
                             self.reward_tracker.log_hint_accuracy(
                                 index_array, effective_level_by_batch_idx, accuracies, self.global_steps
                             )
-                            metrics["hint/accuracy_threshold"] = threshold
+                            metrics["hint/accuracy_min_threshold"] = float(min_threshold)
+                            metrics["hint/accuracy_max_threshold"] = float(max_threshold)
                             for idx, acc in enumerate(accuracies):
                                 index_str = str(index_array[idx])
                                 current_level = effective_level_by_batch_idx.get(idx, "no_hint")

@@ -10,4 +10,5 @@ defaults:
 
 trainer:
   # Threshold for switching hint levels based on per-prompt rollout accuracy.
-  hint_accuracy_threshold: 0.5
+  hint_accuracy_min_threshold: 0.0
+  hint_accuracy_max_threshold: 0.25
