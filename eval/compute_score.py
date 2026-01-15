@@ -12,6 +12,7 @@ from math_verify.parser import ExprExtractionConfig, LatexExtractionConfig
 
 from qwen_evaluation.grader import math_equal
 from qwen_evaluation.parser import extract_answer
+from oat_math_grader import boxed_reward_fn as oat_evaluate
 
 
 @dataclass
@@ -27,6 +28,10 @@ class ScriptArguments:
     save_score: Optional[bool] = field(
         default=False,
         metadata={"help": "whether to save the score for each sample"},
+    )
+    use_oat_grader: Optional[bool] = field(
+        default=False,
+        metadata={"help": "whether to use the grader from oat"},
     )
 
 
@@ -88,20 +93,31 @@ def main():
     ds = load_dataset("json", data_files=script_args.dataset_path, split="train")
 
     # Compute scores
-    is_minerva_math = False #"minerva_math" in script_args.dataset_path.lower()
+    if script_args.use_oat_grader:
+        all_scores = []
+        for i in range(len(ds)):
+            tmp_scores = []
+            all_responses = ds[i]["responses"]
+            ground_truth = ds[i]["gt"]
+            for response in all_responses:
+                score = oat_evaluate(response, ground_truth, fast=False)
+                tmp_scores.append(score[1] == 1.0)
+            all_scores.append(tmp_scores)
+    else:
+        is_minerva_math = False #"minerva_math" in script_args.dataset_path.lower()
 
-    all_scores = []
-    for i in range(len(ds)):
-        tmp_scores = []
-        all_responses = ds[i]["responses"]
-        ground_truth = ds[i]["gt"]
-        for response in all_responses:
-            if is_minerva_math:
-                score = math_equal(extract_answer(response, "minerva_math"), ground_truth)
-            else:
-                score = compute_score(response, ground_truth)
-            tmp_scores.append(score)
-        all_scores.append(tmp_scores)
+        all_scores = []
+        for i in range(len(ds)):
+            tmp_scores = []
+            all_responses = ds[i]["responses"]
+            ground_truth = ds[i]["gt"]
+            for response in all_responses:
+                if is_minerva_math:
+                    score = math_equal(extract_answer(response, "minerva_math"), ground_truth)
+                else:
+                    score = compute_score(response, ground_truth)
+                tmp_scores.append(score)
+            all_scores.append(tmp_scores)
 
     # Save the average score
     with open(script_args.record_path, "w") as f:
