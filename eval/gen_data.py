@@ -72,6 +72,10 @@ class ScriptArguments:
         default_factory=lambda: [],
         metadata={"help": "the ids of the end of sentence tokens"},
     )
+    for_luffy: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Use specifi system prompt for LUFFY model"},
+    )
 
 
 def main():
@@ -112,7 +116,10 @@ def main():
         ds = load_dataset(script_args.dataset_name_or_path, split="train")
 
     # Process dataset to make prompts
-    system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
+    if script_args.for_luffy:
+        system_prompt = "Your task is to follow a systematic, thorough reasoning process before providing the final solution. This involves analyzing, summarizing, exploring, reassessing, and refining your thought process through multiple iterations. Structure your response into two sections: Thought and Solution. In the Thought section, present your reasoning using the format: \"<tool_call>\n {thoughts} <tool_call>\n\". Each thought should include detailed analysis, brainstorming, verification, and refinement of ideas. After \"<tool_call>\n,\" in the Solution section, provide the final, logical, and accurate answer, clearly derived from the exploration in the Thought section. If applicable, include the answer in \\boxed{} for closed-form results like multiple choices or mathematical solutions."
+    else:
+        system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
     def make_prompt(example):
         question = example["problem"]
         prompt_messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": question}]
